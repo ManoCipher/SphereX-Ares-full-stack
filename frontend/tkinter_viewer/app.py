@@ -191,8 +191,12 @@ class SPHERExViewer:
             status_row, text="View Selected Details", command=self.show_selected_details, state="disabled"
         )
         self.details_button.pack(side="right", padx=(8, 0))
+        self.blink_button = ttk.Button(status_row, text="Blink Selected", command=self.show_blink)
+        self.blink_button.pack(side="right", padx=(8, 0))
+        self.auto_blink_button = ttk.Button(status_row, text="Auto Blink (time)", command=self.auto_blink)
+        self.auto_blink_button.pack(side="right", padx=(8, 0))
 
-        split = ttk.Panedwindow(root, orient="vertical")
+        split =ttk.Panedwindow(root, orient="vertical")
         split.pack(fill="both", expand=True, padx=8, pady=(2, 8))
 
         table_frame = ttk.LabelFrame(split, text="Observations (click the Image box to select up to six)", padding=5)
@@ -322,6 +326,73 @@ class SPHERExViewer:
                 self._queue.put(("preview_error", str(exc)))
 
         threading.Thread(target=run, name="spherex-fits-preview", daemon=True).start()
+
+    def auto_blink(self) -> None:
+        """Search ALL frames at the target, pick up to 5 across epochs, and blink them.
+
+        The table may show only the first ``Max results`` rows, which can hide
+        later epochs, so this runs its own unlimited search in the background.
+        """
+        from spherex.time_selection import AUTO_SEARCH_MAX_RESULTS, select_time_series
+
+        from .blink_window import open_blink_window
+
+        try:
+            ra = float(self.entries["RA (deg)"].get())
+            dec = float(self.entries["Dec (deg)"].get())
+            radius = float(self.entries["Radius (deg)"].get())
+            self.client._validate_position(ra, dec, radius)
+        except ValueError as exc:
+            self.status.set(f"Invalid search: {exc}")
+            return
+        self.auto_blink_button.configure(state="disabled")
+        self.status.set("Auto Blink: searching all SPHEREx frames at this position...")
+        outcome: queue.Queue[tuple[str, Any]] = queue.Queue()
+
+        def run() -> None:
+            try:
+                found = self.client.search(ra=ra, dec=dec, radius=radius, max_results=AUTO_SEARCH_MAX_RESULTS)
+                outcome.put(("ok", select_time_series(found, ra, dec, count=5)))
+            except Exception as exc:
+                outcome.put(("error", str(exc)))
+
+        def finish() -> None:
+            try:
+                kind, payload = outcome.get_nowait()
+            except queue.Empty:
+                self.root.after(100, finish)
+                return
+            self.auto_blink_button.configure(state="normal")
+            if kind == "error":
+                self.status.set(f"Auto Blink search failed: {payload}")
+            elif len(payload["observations"]) < 2:
+                self.status.set(f"Auto Blink needs at least 2 frames of one detector. {payload['note']}")
+            else:
+                open_blink_window(
+                    self.root, self.preview_service, payload["observations"], ra, dec, self._rendering_settings()
+                )
+                self.status.set(f"Auto Blink: {payload['note']}")
+
+        threading.Thread(target=run, name="spherex-auto-blink", daemon=True).start()
+        self.root.after(100, finish)
+
+    def show_blink(self) -> None:
+        """Open a separate WCS-aligned blink window for 2-6 checked observations."""
+        from .blink_window import open_blink_window
+
+        selected = [self._records[item] for item in self.table.get_children("") if item in self._checked]
+        if not 2 <= len(selected) <= 6:
+            self.status.set(f"Blink needs 2 to 6 checked observations; currently selected: {len(selected)}.")
+            return
+        try:
+            ra = float(self.entries["RA (deg)"].get())
+            dec = float(self.entries["Dec (deg)"].get())
+            self.client._validate_position(ra, dec, 0.01)
+        except ValueError as exc:
+            self.status.set(f"Invalid target coordinates: {exc}")
+            return
+        open_blink_window(self.root, self.preview_service, selected, ra, dec, self._rendering_settings())
+        self.status.set(f"Blink window opened for {len(selected)} observation(s).")
 
     def _poll_results(self) -> None:
         try:

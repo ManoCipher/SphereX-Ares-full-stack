@@ -195,8 +195,15 @@ def _draw(
     vmax: float,
     target: tuple[float, float] | None,
     show_grid: bool,
-) -> None:
+) -> dict[str, float]:
+    """Save the PNG and return how image pixels map onto PNG pixels.
+
+    The layout is fixed (no tight bounding box), so every frame of one blink
+    has the same mapping and a click on the PNG can be turned back into an
+    image pixel, and from there into sky coordinates.
+    """
     figure = plt.figure(figsize=(5.0, 4.6), dpi=100)
+    figure.subplots_adjust(left=0.2, right=0.96, bottom=0.12, top=0.93)
     try:
         axes = figure.add_subplot(111, projection=wcs)
         axes.imshow(image, origin="lower", cmap=colormap, vmin=vmin, vmax=vmax)
@@ -212,9 +219,32 @@ def _draw(
                 markeredgewidth=1.4, color="cyan", transform=axes.get_transform("world"),
             )
         axes.set_title(title, fontsize=9)
-        figure.savefig(destination, facecolor="white", bbox_inches="tight")
+        figure.canvas.draw()
+        (x0, y0), (x1, y1) = axes.transData.transform([(0.0, 0.0), (1.0, 1.0)])
+        png_height = figure.get_size_inches()[1] * figure.dpi
+        figure.savefig(destination, facecolor="white")
+        # PNG column = x_scale * image_x + x_offset; PNG row = y_scale * image_y + y_offset
+        # (image y grows upwards, PNG rows grow downwards, hence the flip).
+        return {
+            "x_scale": float(x1 - x0),
+            "x_offset": float(x0),
+            "y_scale": float(-(y1 - y0)),
+            "y_offset": float(png_height - y0),
+        }
     finally:
         plt.close(figure)
+
+
+def png_to_image_pixel(mapping: Mapping[str, float], column: float, row: float) -> tuple[float, float]:
+    """Invert the mapping returned by the renderer: PNG click -> image (x, y)."""
+    return (
+        (column - mapping["x_offset"]) / mapping["x_scale"],
+        (row - mapping["y_offset"]) / mapping["y_scale"],
+    )
+
+
+def image_pixel_to_png(mapping: Mapping[str, float], x: float, y: float) -> tuple[float, float]:
+    return x * mapping["x_scale"] + mapping["x_offset"], y * mapping["y_scale"] + mapping["y_offset"]
 
 
 def render_blink(
@@ -248,8 +278,8 @@ def render_blink(
             name = _safe_name(meta.get("observation_id"), f"frame{index}")
             path = destination / f"blink_{index:02d}_{name}_D{_safe_name(meta.get('detector'), 'x')}.png"
             title = f"{meta.get('observation_timestamp') or 'date unknown'}  |  D{meta.get('detector') or '-'}"
-            _draw(apply_scale(frame, low, high, stretch), wcs, path, title, colormap=colormap_name,
-                  vmin=0.0, vmax=1.0, target=target, show_grid=show_grid)
+            mapping = _draw(apply_scale(frame, low, high, stretch), wcs, path, title, colormap=colormap_name,
+                            vmin=0.0, vmax=1.0, target=target, show_grid=show_grid)
             frame_paths.append(str(path.resolve()))
 
         difference = difference_image(aligned)
@@ -274,6 +304,9 @@ def render_blink(
         "reference_observation_id": aligned["reference_observation_id"],
         "metadata": aligned["metadata"],
         "wavelength": aligned["wavelength"],
+        # For clicking on the PNGs (candidate investigation); same for every frame.
+        "pixel_mapping": mapping,
+        "aligned": aligned,
     }
 
 

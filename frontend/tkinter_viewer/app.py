@@ -179,6 +179,32 @@ class SPHERExViewer:
         self.mapping_note.grid(row=0, column=8, sticky="e", padx=(12, 4))
         display.columnconfigure(8, weight=1)
 
+        cleaning = ttk.LabelFrame(root, text="Image Cleaning", padding=(6, 4))
+        cleaning.pack(fill="x", padx=8, pady=2)
+        self.cleaning_enabled = tk.BooleanVar(value=True)
+        self.quality_masking = tk.BooleanVar(value=True)
+        self.background_correction = tk.BooleanVar(value=True)
+        self.artefact_inspection = tk.BooleanVar(value=True)
+        cleaning_controls = (
+            ("Enable image cleaning", self.cleaning_enabled),
+            ("Quality masking", self.quality_masking),
+            ("Background correction", self.background_correction),
+            ("Artefact/streak inspection", self.artefact_inspection),
+        )
+        for column, (label, variable) in enumerate(cleaning_controls):
+            ttk.Checkbutton(
+                cleaning,
+                text=label,
+                variable=variable,
+                command=self._cleaning_changed,
+            ).grid(row=0, column=column, sticky="w", padx=(4, 12))
+        ttk.Label(
+            cleaning,
+            text="Masks remain separate; suspected streak pixels are never interpolated.",
+        ).grid(row=0, column=len(cleaning_controls), sticky="e", padx=4)
+        cleaning.columnconfigure(len(cleaning_controls), weight=1)
+        self._cleaning_changed()
+
         status_row = ttk.Frame(root)
         status_row.pack(fill="x", padx=10, pady=2)
         self.status = tk.StringVar(value="Search a sky position, then check observations to preview.")
@@ -282,6 +308,17 @@ class SPHERExViewer:
             "show_grid": bool(self.show_grid.get()),
             "show_target": bool(self.show_target.get()),
         }
+
+    def _cleaning_settings(self) -> dict[str, bool]:
+        return {
+            "enabled": bool(self.cleaning_enabled.get()),
+            "quality_masking": bool(self.quality_masking.get()),
+            "background_correction": bool(self.background_correction.get()),
+            "artefact_inspection": bool(self.artefact_inspection.get()),
+        }
+
+    def _cleaning_changed(self) -> None:
+        self.preview_service.configure_cleaning(self._cleaning_settings())
 
     def show_selected_images(self) -> None:
         selected = [self._records[item] for item in self.table.get_children("") if item in self._checked]

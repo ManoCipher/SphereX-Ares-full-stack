@@ -40,6 +40,10 @@ class ObservationPreviewService:
         )
         self._file_index: list[Path] | None = None
 
+    def configure_cleaning(self, settings: Mapping[str, Any] | None = None) -> dict[str, bool]:
+        """Configure the shared FITS preprocessing boundary used by all consumers."""
+        return self.processor.configure_cleaning(settings)
+
     def refresh_files(self) -> None:
         """Refresh the downloaded-file index after an external download."""
         self._file_index = None

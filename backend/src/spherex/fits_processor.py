@@ -25,6 +25,7 @@ from astropy.nddata import Cutout2D
 from astropy.wcs import FITSFixedWarning, WCS
 
 from .image_renderer import ImageRenderingError, SpherexImageRenderer
+from .image_cleaner import SpherexImageCleaner, default_cleaning_settings
 
 LOG = logging.getLogger(__name__)
 
@@ -98,6 +99,14 @@ class SpherexFitsProcessor:
     def __init__(self, preview_dir: Path | str = "cache/previews") -> None:
         self.preview_dir = Path(preview_dir)
         self.renderer = SpherexImageRenderer()
+        self.cleaner = SpherexImageCleaner()
+        self.cleaning_settings = default_cleaning_settings()
+
+    def configure_cleaning(self, settings: Mapping[str, Any] | None = None) -> dict[str, bool]:
+        """Set cleaning stages used by subsequent FITS extractions."""
+        configured = {**default_cleaning_settings(), **dict(settings or {})}
+        self.cleaning_settings = {key: bool(value) for key, value in configured.items()}
+        return dict(self.cleaning_settings)
 
     @staticmethod
     def _science_hdu_index(hdul: fits.HDUList) -> int:
@@ -219,6 +228,41 @@ class SpherexFitsProcessor:
                 )
                 if not np.isfinite(cutout.data).any():
                     raise InvalidImageDataError("Target cutout contains no finite image pixels")
+                auxiliary: dict[str, np.ndarray | None] = {}
+                flag_header: fits.Header | None = None
+                for name, fill in (("FLAGS", 0), ("VARIANCE", np.nan), ("ZODI", np.nan)):
+                    auxiliary_hdu = self._named_image_hdu(hdul, name, image.shape)
+                    if auxiliary_hdu is None:
+                        auxiliary[name] = None
+                        continue
+                    if name == "FLAGS":
+                        flag_header = auxiliary_hdu.header
+                    auxiliary[name] = Cutout2D(
+                        np.asarray(auxiliary_hdu.data),
+                        position=(x, y),
+                        size=cutout_size,
+                        wcs=wcs,
+                        mode="partial",
+                        fill_value=fill,
+                        copy=True,
+                    ).data
+                cleaning_header = hdu.header.copy()
+                if flag_header is not None:
+                    for key in flag_header:
+                        if str(key).upper().startswith("MP_"):
+                            cleaning_header[key] = flag_header[key]
+                cleaning = self._clean_cutout(
+                    path,
+                    cutout.data,
+                    auxiliary["FLAGS"],
+                    auxiliary["VARIANCE"],
+                    cleaning_header,
+                    auxiliary["ZODI"],
+                    cutout.wcs,
+                    ra_value,
+                    dec_value,
+                    cutout_size,
+                )
                 metadata = self.inspect_fits(path)
                 metadata.update(
                     {
@@ -230,9 +274,26 @@ class SpherexFitsProcessor:
                         "image_height": int(cutout.data.shape[0]),
                         "source_image_width": width,
                         "source_image_height": height,
+                        "cleaning": {
+                            "parameters": cleaning["parameters"],
+                            "statistics": cleaning["statistics"],
+                            "provenance": cleaning["provenance"],
+                            "warnings": cleaning["warnings"],
+                            "cached": cleaning["cached"],
+                        },
                     }
                 )
-                return {"data": cutout.data, "wcs": cutout.wcs, "metadata": metadata}
+                return {
+                    "data": cleaning["cleaned_image"],
+                    "original_data": cleaning["original_image"],
+                    "cleaned_data": cleaning["cleaned_image"],
+                    "quality_mask": cleaning["quality_mask"],
+                    "artefact_mask": cleaning["artefact_mask"],
+                    "background_model": cleaning["background_model"],
+                    "wcs": cutout.wcs,
+                    "original_wcs": cutout.wcs,
+                    "metadata": metadata,
+                }
         except (FitsProcessingError, FileNotFoundError):
             raise
         except (OSError, ValueError) as exc:
@@ -302,6 +363,8 @@ class SpherexFitsProcessor:
                 result["fits_filename"] = file_path.name
                 cache_settings = {
                     **display,
+                    "cleaning": self.cleaning_settings,
+                    "cleaning_pipeline_version": self.cleaner.pipeline_version,
                     "observation_id": result["observation_id"],
                     "fits_filename": file_path.name,
                     "detector": observation.get("detector"),
@@ -375,6 +438,7 @@ class SpherexFitsProcessor:
                     wavelength_um=wavelength["wavelength_um"],
                     wavelength_source=wavelength["source"],
                     rendering=display,
+                    cleaning=metadata.get("cleaning"),
                     scaling={key: value for key, value in render.items() if key != "preview_path"},
                 )
                 self._write_cache(metadata_path, signature, result)
@@ -402,7 +466,7 @@ class SpherexFitsProcessor:
         size: int | tuple[int, int] = 200,
         rendering: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Extract, align and render exactly three original FITS observations."""
+        """Extract, align and render exactly three FITS observations."""
         if len(observations) != 3:
             raise ValueError("RGB composite generation requires exactly three observations")
         settings = {
@@ -433,6 +497,8 @@ class SpherexFitsProcessor:
             )
         cache_settings = {
             **settings,
+            "cleaning": self.cleaning_settings,
+            "cleaning_pipeline_version": self.cleaner.pipeline_version,
             "channels": [
                 {
                     "observation_id": entry["observation_id"],
@@ -581,6 +647,96 @@ class SpherexFitsProcessor:
                     if path.suffix.lower() in {".fits", ".fit", ".fts"}:
                         raise FileNotFoundError(f"Downloaded FITS file is missing: {path}")
         raise FileNotFoundError("Observation has no downloaded FITS file path")
+
+    @staticmethod
+    def _named_image_hdu(
+        hdul: fits.HDUList, name: str, shape: tuple[int, int]
+    ) -> fits.ImageHDU | fits.PrimaryHDU | None:
+        wanted = name.upper()
+        for hdu in hdul:
+            if str(hdu.header.get("EXTNAME", "")).upper() != wanted:
+                continue
+            array = _as_2d(hdu.data)
+            if array is not None and array.shape == shape:
+                return hdu
+        return None
+
+    def _clean_cutout(
+        self,
+        path: Path,
+        image: np.ndarray,
+        flags: np.ndarray | None,
+        variance: np.ndarray | None,
+        header: fits.Header,
+        zodi: np.ndarray | None,
+        wcs: WCS,
+        ra: float,
+        dec: float,
+        size: tuple[int, int],
+    ) -> dict[str, Any]:
+        settings = dict(self.cleaning_settings)
+        cache_settings = {
+            "cleaning": settings,
+            "pipeline_version": self.cleaner.pipeline_version,
+        }
+        signature = self._cache_signature(path, ra, dec, size, cache_settings)
+        cache_dir = self.preview_dir / "cleaning"
+        arrays_path = cache_dir / f"{signature}.npz"
+        metadata_path = cache_dir / f"{signature}.json"
+        if arrays_path.is_file() and metadata_path.is_file():
+            try:
+                with np.load(arrays_path, allow_pickle=False) as cached_arrays:
+                    cached_metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+                    result = {
+                        "original_image": image,
+                        "cleaned_image": np.array(cached_arrays["cleaned_image"], copy=True),
+                        "quality_mask": np.array(cached_arrays["quality_mask"], dtype=bool, copy=True),
+                        "artefact_mask": np.array(cached_arrays["artefact_mask"], dtype=bool, copy=True),
+                        "background_model": np.array(cached_arrays["background_model"], copy=True),
+                        **cached_metadata,
+                        "cached": True,
+                    }
+                if result["cleaned_image"].shape == image.shape:
+                    return result
+            except (OSError, ValueError, KeyError, json.JSONDecodeError):
+                LOG.warning("Ignoring invalid cleaning cache %s", arrays_path)
+
+        result = self.cleaner.clean(
+            image=image,
+            flags=flags,
+            variance=variance,
+            header=header,
+            zodi=zodi,
+            settings=settings,
+            wcs=wcs,
+        )
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            with arrays_path.open("wb") as destination:
+                np.savez_compressed(
+                    destination,
+                    cleaned_image=result["cleaned_image"],
+                    quality_mask=result["quality_mask"],
+                    artefact_mask=result["artefact_mask"],
+                    background_model=result["background_model"],
+                )
+            metadata_path.write_text(
+                json.dumps(
+                    {
+                        "statistics": result["statistics"],
+                        "parameters": result["parameters"],
+                        "provenance": result["provenance"],
+                        "warnings": result["warnings"],
+                    },
+                    sort_keys=True,
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+        except OSError as exc:
+            LOG.warning("Could not write cleaning cache for %s: %s", path.name, exc)
+        result["cached"] = False
+        return result
 
     @staticmethod
     def _cache_signature(

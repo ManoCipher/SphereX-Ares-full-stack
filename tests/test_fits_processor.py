@@ -82,7 +82,9 @@ def test_inspection_prefers_named_image_hdu_and_extracts_metadata(tmp_path: Path
 def test_wcs_conversion_and_cutout_alignment(tmp_path: Path):
     path = tmp_path / "science.fits"
     _write_image(path)
-    result = SpherexFitsProcessor(tmp_path / "previews").extract_target(path, 150.25, 2.1, size=20)
+    processor = SpherexFitsProcessor(tmp_path / "previews")
+    processor.configure_cleaning({"enabled": False})
+    result = processor.extract_target(path, 150.25, 2.1, size=20)
     assert result["metadata"]["pixel_x"] == pytest.approx(50.0, abs=1e-6)
     assert result["metadata"]["pixel_y"] == pytest.approx(50.0, abs=1e-6)
     assert result["data"].shape == (20, 20)
@@ -90,6 +92,7 @@ def test_wcs_conversion_and_cutout_alignment(tmp_path: Path):
     assert cutout_x == pytest.approx(10.0, abs=1e-6)
     assert cutout_y == pytest.approx(10.0, abs=1e-6)
     assert result["data"][10, 10] == pytest.approx(5050.0)
+    assert np.array_equal(result["data"], result["original_data"])
 
 
 def test_target_outside_and_missing_wcs_are_distinct(tmp_path: Path):

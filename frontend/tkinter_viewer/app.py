@@ -20,6 +20,7 @@ if str(BACKEND_SRC) not in sys.path:
     sys.path.insert(0, str(BACKEND_SRC))
 
 from spherex.observation_service import ObservationPreviewService
+from spherex.observation_selector import ObservationSelectionService, SelectionMode, SelectionResult
 from spherex.spherex_client import SPHERExArchiveError, SPHERExClient, SPHERExObservation
 
 
@@ -96,6 +97,9 @@ class SPHERExViewer:
         self.root = root
         self.client = client or SPHERExClient()
         self.preview_service = preview_service or ObservationPreviewService()
+        self.selection_service = ObservationSelectionService(
+            path_resolver=self.preview_service.resolve_fits_path
+        )
         self._queue: queue.Queue[tuple[str, Any]] = queue.Queue()
         self._records: dict[str, SPHERExObservation] = {}
         self._checked: set[str] = set()
@@ -179,6 +183,32 @@ class SPHERExViewer:
         self.mapping_note.grid(row=0, column=8, sticky="e", padx=(12, 4))
         display.columnconfigure(8, weight=1)
 
+        cleaning = ttk.LabelFrame(root, text="Image Cleaning", padding=(6, 4))
+        cleaning.pack(fill="x", padx=8, pady=2)
+        self.cleaning_enabled = tk.BooleanVar(value=True)
+        self.quality_masking = tk.BooleanVar(value=True)
+        self.background_correction = tk.BooleanVar(value=True)
+        self.artefact_inspection = tk.BooleanVar(value=True)
+        cleaning_controls = (
+            ("Enable image cleaning", self.cleaning_enabled),
+            ("Quality masking", self.quality_masking),
+            ("Background correction", self.background_correction),
+            ("Artefact/streak inspection", self.artefact_inspection),
+        )
+        for column, (label, variable) in enumerate(cleaning_controls):
+            ttk.Checkbutton(
+                cleaning,
+                text=label,
+                variable=variable,
+                command=self._cleaning_changed,
+            ).grid(row=0, column=column, sticky="w", padx=(4, 12))
+        ttk.Label(
+            cleaning,
+            text="Masks remain separate; suspected streak pixels are never interpolated.",
+        ).grid(row=0, column=len(cleaning_controls), sticky="e", padx=4)
+        cleaning.columnconfigure(len(cleaning_controls), weight=1)
+        self._cleaning_changed()
+
         status_row = ttk.Frame(root)
         status_row.pack(fill="x", padx=10, pady=2)
         self.status = tk.StringVar(value="Search a sky position, then check observations to preview.")
@@ -201,6 +231,34 @@ class SPHERExViewer:
 
         table_frame = ttk.LabelFrame(split, text="Observations (click the Image box to select up to six)", padding=5)
         split.add(table_frame, weight=1)
+        selector = ttk.Frame(table_frame)
+        selector.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 5))
+        self.selection_mode = tk.StringVar(value=SelectionMode.TIME.value)
+        self.selection_explanation = tk.StringVar(
+            value="Time Comparison is the default for moving-object investigation."
+        )
+        ttk.Label(selector, text="Observation selection mode").pack(side="left", padx=(0, 5))
+        self.selection_mode_combo = ttk.Combobox(
+            selector,
+            textvariable=self.selection_mode,
+            values=tuple(mode.value for mode in SelectionMode),
+            state="readonly",
+            width=22,
+        )
+        self.selection_mode_combo.pack(side="left")
+        self.selection_mode_combo.bind("<<ComboboxSelected>>", self._selection_mode_changed)
+        self.auto_select_button = ttk.Button(
+            selector,
+            text="Auto Select Observations",
+            command=self.auto_select_observations,
+            state="disabled",
+        )
+        self.auto_select_button.pack(side="left", padx=8)
+        ttk.Label(
+            selector, textvariable=self.selection_explanation, anchor="w", wraplength=800
+        ).pack(
+            side="left", fill="x", expand=True, padx=(4, 0)
+        )
         self.table = ttk.Treeview(table_frame, columns=self.COLUMNS, show="headings", selectmode="browse")
         widths = (55, 165, 235, 70, 100, 95, 95, 90, 120)
         for column, width in zip(self.COLUMNS, widths, strict=True):
@@ -209,10 +267,10 @@ class SPHERExViewer:
         table_y = ttk.Scrollbar(table_frame, orient="vertical", command=self.table.yview)
         table_x = ttk.Scrollbar(table_frame, orient="horizontal", command=self.table.xview)
         self.table.configure(yscrollcommand=table_y.set, xscrollcommand=table_x.set)
-        self.table.grid(row=0, column=0, sticky="nsew")
-        table_y.grid(row=0, column=1, sticky="ns")
-        table_x.grid(row=1, column=0, sticky="ew")
-        table_frame.rowconfigure(0, weight=1)
+        self.table.grid(row=1, column=0, sticky="nsew")
+        table_y.grid(row=1, column=1, sticky="ns")
+        table_x.grid(row=2, column=0, sticky="ew")
+        table_frame.rowconfigure(1, weight=1)
         table_frame.columnconfigure(0, weight=1)
         self.table.bind("<Button-1>", self._table_click, add=True)
 
@@ -273,6 +331,72 @@ class SPHERExViewer:
         self.preview_button.configure(text="Generate RGB Composite" if rgb_mode else "Show Selected Images")
         self.palette_combo.configure(state="disabled" if rgb_mode or greyscale else "readonly")
 
+    def _selection_mode_changed(self, _event: Any = None) -> None:
+        """Mode changes never alter checkbox state or trigger selection."""
+        manual = self.selection_mode.get() == SelectionMode.MANUAL.value
+        self.auto_select_button.configure(
+            state="disabled" if manual or not self._records else "normal"
+        )
+        if manual:
+            self._update_selection_summary("Manual choices preserved; auto-selection is off.")
+        else:
+            self._update_selection_summary("Click Auto Select Observations to apply this mode.")
+
+    def auto_select_observations(self) -> None:
+        """Select rows only; this does not download data or start Blink."""
+        try:
+            mode = SelectionMode(self.selection_mode.get())
+            if mode is SelectionMode.MANUAL:
+                self._update_selection_summary("Manual choices preserved; auto-selection is off.")
+                return
+            ra = float(self.entries["RA (deg)"].get())
+            dec = float(self.entries["Dec (deg)"].get())
+            self.client._validate_position(ra, dec, 0.01)
+        except ValueError as exc:
+            self.status.set(f"Cannot auto-select observations: {exc}")
+            return
+        records = list(self._records.values())
+        if not records:
+            self.status.set("Search for observations before using auto-selection.")
+            return
+        self.auto_select_button.configure(state="disabled")
+        self.status.set(f"Selecting observations for {mode.value}...")
+
+        def run() -> None:
+            try:
+                result = self.selection_service.select(records, ra, dec, mode)
+                self._queue.put(("selection_result", result))
+            except Exception as exc:
+                self._queue.put(("selection_error", str(exc)))
+
+        threading.Thread(target=run, name="spherex-observation-selection", daemon=True).start()
+
+    def _apply_selection_result(self, result: SelectionResult) -> None:
+        selected_records = {id(record) for record in result.observations}
+        self._checked = {
+            item for item, record in self._records.items() if id(record) in selected_records
+        }
+        for item in self.table.get_children(""):
+            self.table.set(item, "selected", "\u2611" if item in self._checked else "\u2610")
+        self.details_button.configure(state="normal" if self._checked else "disabled")
+        self._update_selection_summary(result.explanation)
+        self.status.set(
+            f"Auto-selected {len(self._checked)} observation(s). You can adjust the checkboxes manually."
+        )
+
+    def _update_selection_summary(self, explanation: str) -> None:
+        selected = [
+            self._records[item] for item in self.table.get_children("") if item in self._checked
+        ] if hasattr(self, "table") else []
+        details = "; ".join(
+            f"{record.get('observation_id') or '-'} | D{record.get('detector') or '-'} | "
+            f"{record.get('observation_timestamp') or 'date unavailable'}"
+            for record in selected
+        )
+        self.selection_explanation.set(
+            f"{explanation} Selected: {details}" if details else explanation
+        )
+
     def _rendering_settings(self) -> dict[str, Any]:
         mode = self.display_mode.get()
         return {
@@ -282,6 +406,17 @@ class SPHERExViewer:
             "show_grid": bool(self.show_grid.get()),
             "show_target": bool(self.show_target.get()),
         }
+
+    def _cleaning_settings(self) -> dict[str, bool]:
+        return {
+            "enabled": bool(self.cleaning_enabled.get()),
+            "quality_masking": bool(self.quality_masking.get()),
+            "background_correction": bool(self.background_correction.get()),
+            "artefact_inspection": bool(self.artefact_inspection.get()),
+        }
+
+    def _cleaning_changed(self) -> None:
+        self.preview_service.configure_cleaning(self._cleaning_settings())
 
     def show_selected_images(self) -> None:
         selected = [self._records[item] for item in self.table.get_children("") if item in self._checked]
@@ -419,6 +554,20 @@ class SPHERExViewer:
                 elif kind == "preview_error":
                     self.preview_button.configure(state="normal")
                     self.status.set(f"Preview generation failed: {payload}")
+                elif kind == "selection_result":
+                    self._apply_selection_result(payload)
+                    self.auto_select_button.configure(
+                        state="disabled"
+                        if self.selection_mode.get() == SelectionMode.MANUAL.value
+                        else "normal"
+                    )
+                elif kind == "selection_error":
+                    self.auto_select_button.configure(
+                        state="disabled"
+                        if self.selection_mode.get() == SelectionMode.MANUAL.value
+                        else "normal"
+                    )
+                    self.status.set(f"Observation selection failed: {payload}")
         except queue.Empty:
             pass
         self.root.after(100, self._poll_results)
@@ -451,6 +600,14 @@ class SPHERExViewer:
                 ),
             )
         self.preview_button.configure(state="normal" if observations else "disabled")
+        self.auto_select_button.configure(
+            state="normal"
+            if observations and self.selection_mode.get() != SelectionMode.MANUAL.value
+            else "disabled"
+        )
+        self._update_selection_summary(
+            "Choose auto-selection or check rows manually; no data has been downloaded."
+        )
 
     def _table_click(self, event: Any) -> None:
         if self.table.identify_region(event.x, event.y) != "cell" or self.table.identify_column(event.x) != "#1":
@@ -470,6 +627,7 @@ class SPHERExViewer:
             self.status.set(f"{count} observations selected; the preview limit is 6.")
         else:
             self.status.set(f"{count} observation(s) selected for preview.")
+        self._update_selection_summary("Manual adjustment retained; auto-selection was not rerun.")
 
     def _render_gallery(self, results: list[dict[str, Any]]) -> None:
         import tkinter as tk

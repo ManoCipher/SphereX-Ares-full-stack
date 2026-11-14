@@ -1,3 +1,5 @@
+"""Backend scientific analysis and diagnostic plots."""
+
 from __future__ import annotations
 
 import logging

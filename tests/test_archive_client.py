@@ -1,6 +1,7 @@
 import pytest
 
 from spherex.archive_client import OBSERVATION_COLUMNS, IrsaSiaClient, parse_archive_rows
+from spherex.config import ArchiveConfig
 from spherex.targets import WISE_0855
 
 
@@ -26,3 +27,19 @@ def test_empty_results(monkeypatch):
     result = client.discover(WISE_0855)
     assert result.empty
     assert list(result.columns) == OBSERVATION_COLUMNS
+
+
+def test_current_releases_are_combined(monkeypatch):
+    client = IrsaSiaClient(ArchiveConfig(collections=("spherex_dr1", "spherex_qr3")))
+
+    def fake_search(target, collection, epoch):
+        return parse_archive_rows(
+            [{"obs_id": collection, "access_url": f"https://example.test/{collection}.fits"}],
+            collection,
+            target,
+        )
+
+    monkeypatch.setattr(client, "_search_collection", fake_search)
+    result = client.discover(WISE_0855)
+
+    assert result["collection"].tolist() == ["spherex_dr1", "spherex_qr3"]

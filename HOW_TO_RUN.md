@@ -87,7 +87,7 @@ package importable while keeping its source files in the cloned repository.
 From the repository root, run:
 
 ```bash
-python -m spherex.viewer
+python -m frontend.tkinter_viewer
 ```
 
 In the viewer:
@@ -96,9 +96,21 @@ In the viewer:
 2. Enter a search radius in degrees.
 3. Optionally enter ISO dates such as `2025-07-01` and `2026-01-31`.
 4. Select **Search IRSA**.
-5. Select an observation row to inspect all returned metadata.
-6. Use **Open selected FITS URL** only when you intentionally want to open the
+5. Check the **Image** box for one to six observations marked **Downloaded**.
+6. Select **Show Selected Images** to create WCS-centred previews without
+   blocking the window.
+7. Select a gallery card to inspect its FITS filename, dimensions, units,
+   target pixel coordinates, scaling, and observation metadata.
+8. Use **Open selected FITS URL** only when you intentionally want to open the
    archive file URL.
+
+The application is split into two layers:
+
+- `backend/src/spherex`: archive access, downloading, FITS/WCS processing, and
+  the framework-independent observation service. A future FastAPI application
+  can call this service without depending on Tkinter.
+- `frontend/tkinter_viewer`: the desktop presentation layer. It imports the
+  backend service directly; the backend never imports frontend code.
 
 The default example position is:
 
@@ -179,7 +191,7 @@ their distribution's Tkinter package, commonly `python3-tk`.
 Activation is optional. Run the virtual environment's Python directly:
 
 ```powershell
-.\.venv\Scripts\python.exe -m spherex.viewer
+.\.venv\Scripts\python.exe -m frontend.tkinter_viewer
 ```
 
 ### The viewer opens but searches return no observations

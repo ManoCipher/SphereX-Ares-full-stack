@@ -1,4 +1,4 @@
-"""Small, safe tools for discovering SPHEREx observations at IRSA."""
+"""Framework-independent SPHEREx backend."""
 
 from .spherex_client import SPHERExArchiveError, SPHERExClient, SPHERExObservation
 

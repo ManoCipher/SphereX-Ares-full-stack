@@ -66,7 +66,7 @@ observations = client.search(
 ```
 
 The client sends SIA2 `POS=CIRCLE` queries to IRSA's documented `/SIA`
-endpoint for the QR3 and QR2 wide/deep collections. IRSA performs spherical
+endpoint for the DR1 and QR3 wide/deep collections. IRSA performs spherical
 footprint intersection, including circles that cross RA 0/360 degrees. The
 VOTable responses are normalized into dictionaries containing observation
 times, spatial coverage, detector/band and wavelength metadata, exposure time,
@@ -74,25 +74,27 @@ file size, and the FITS `access_url`; the FITS files themselves are never read.
 Optional `start_date` and `end_date` values are sent as the SIA2 `TIME`
 constraint. See `examples/search_spherex.py` for an executable live query.
 
-Launch the interactive desktop metadata viewer with:
+Launch the interactive FITS image viewer from the repository root with:
 
 ```powershell
-python -m spherex.viewer
+python -m frontend.tkinter_viewer
 ```
 
-The search runs in a background thread, and the result table can be sorted by
-clicking its column headings. Selecting a row shows the complete normalized and
-raw archive metadata. The **Open selected FITS URL** button only navigates to
-the archive URL when explicitly clicked; the viewer itself does not download
-FITS data.
+The search and FITS processing run on background threads. Check the **Image**
+box for up to six observations whose FITS files have already been downloaded,
+then choose **Show Selected Images**. The viewer resolves files below
+`data/raw`, creates WCS-centred 200 x 200 previews under
+`data/processed/previews`, and displays a comparison gallery. Selecting a card
+shows its source filename, dimensions, units, target pixel and processing
+metadata. The viewer never changes the original FITS measurements.
 
-QR3 is queried first. QR2 is queried only if QR3 returns no records or fails. To select one release explicitly, add `--collection spherex_qr3` or `--collection spherex_qr2`. Results from the two releases are never combined automatically because their calibration differs.
+DR1 and QR3 are both queried and their results are combined. To select one release explicitly, add `--collection spherex_dr1` or `--collection spherex_qr3`.
 
 Useful bounded overrides are `--search-radius-deg` (default `0.05`), `--cutout-size-deg` (default `0.02`, or 1.2 arcmin), `--epoch`, `--max-files`, and `--max-mb`. The default remains 10 files. Explicit requests can raise it to a safety ceiling of 100 files, while `--max-mb` independently limits transferred bytes.
 
 ## Target astrometry
 
-`src/spherex/targets.py` defines reusable target records. For WISE 0855 it uses the measured ICRS position `08:55:08.433 -07:14:39.49` at MJD 56986.817 (2014-11-25), reported with 0.05 arcsec precision in Table 1 of [Beamín et al. (2016)](https://doi.org/10.1051/0004-6361/201628662). It uses the Luhman & Esplin astrometric solution quoted in the literature: `pm_ra_cosdec = -8118 ± 8 mas/yr`, `pm_dec = -680 ± 7 mas/yr`, and parallax `449 ± 8 mas`.
+`backend/src/spherex/targets.py` defines reusable target records. For WISE 0855 it uses the measured ICRS position `08:55:08.433 -07:14:39.49` at MJD 56986.817 (2014-11-25), reported with 0.05 arcsec precision in Table 1 of [Beamín et al. (2016)](https://doi.org/10.1051/0004-6361/201628662). It uses the Luhman & Esplin astrometric solution quoted in the literature: `pm_ra_cosdec = -8118 ± 8 mas/yr`, `pm_dec = -680 ± 7 mas/yr`, and parallax `449 ± 8 mas`.
 
 The code propagates the coordinate to the initial discovery epoch and independently to each image's observation midpoint. It does not confuse the J2000/ICRS coordinate frame with the measurement epoch. The scientific dashboard includes annual parallax using Astropy's built-in Earth ephemeris and the FITS geocentric spacecraft position when supplied. Radial velocity is set to zero; its perspective effect over this interval is negligible compared with the positional uncertainty and 6.15-arcsec SPHEREx pixels.
 
@@ -131,4 +133,4 @@ IRSA now provides a [SPHEREx Spectrophotometry Tool](https://irsa.ipac.caltech.e
 - [IRSA program interfaces](https://irsa.ipac.caltech.edu/voapi.html)
 - [SPHEREx Data Explorer FAQ](https://irsa.ipac.caltech.edu/onlinehelp/spherex/spherex/faq.html)
 
-As of October 2026, the archive documentation lists QR3 and QR2 wide-survey SIA2 collections as `spherex_qr3` and `spherex_qr2`, with separate `_deep` collections. This project intentionally searches only the wide-survey collections by default.
+As of November 2026, the archive documentation recommends DR1 and QR3 for new work. The pipeline searches the `spherex_dr1` and `spherex_qr3` wide-survey collections by default; the reusable client also supports their separate `_deep` collections. QR2 is no longer searchable through SIA2.

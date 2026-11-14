@@ -6,8 +6,8 @@ import pytest
 import requests
 from astropy.table import Table
 
-from spherex.spherex_client import SPHERExArchiveError, SPHERExClient
-from spherex.viewer import _size_label, _wavelength_label
+from spherex.spherex_client import SPHEREX_COLLECTIONS, SPHERExArchiveError, SPHERExClient
+from frontend.tkinter_viewer import _size_label, _wavelength_label
 
 
 class FakeResponse:
@@ -48,6 +48,15 @@ def make_client(rows: list[dict], **kwargs) -> tuple[SPHERExClient, FakeSession]
     session = FakeSession([FakeResponse(votable_bytes(rows))])
     client = SPHERExClient(session=session, collections=("spherex_qr3",), **kwargs)
     return client, session
+
+
+def test_default_collections_use_current_releases():
+    assert SPHEREX_COLLECTIONS == (
+        "spherex_dr1",
+        "spherex_dr1_deep",
+        "spherex_qr3",
+        "spherex_qr3_deep",
+    )
 
 
 def test_valid_coordinate_search_and_query_parameters():

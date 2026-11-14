@@ -1,9 +1,10 @@
-"""Reusable metadata-only client for the IRSA SPHEREx SIA2 archive."""
+"""Backend metadata client for the IRSA SPHEREx SIA2 archive."""
 
 from __future__ import annotations
 
 import math
 import re
+import warnings
 from collections.abc import Mapping, Sequence
 from datetime import date, datetime, timezone
 from io import BytesIO
@@ -13,15 +14,16 @@ from urllib.parse import urlparse
 import numpy as np
 import requests
 from astropy.io.votable import parse as parse_votable
+from astropy.io.votable.exceptions import W48
 from astropy.time import Time
 
 
 IRSA_SIA2_URL = "https://irsa.ipac.caltech.edu/SIA"
 SPHEREX_COLLECTIONS = (
+    "spherex_dr1",
+    "spherex_dr1_deep",
     "spherex_qr3",
     "spherex_qr3_deep",
-    "spherex_qr2",
-    "spherex_qr2_deep",
 )
 
 DateInput: TypeAlias = str | date | datetime
@@ -90,7 +92,7 @@ def _number(value: Any) -> float | None:
 class SPHERExClient:
     """Search IRSA for SPHEREx FITS observations without downloading FITS data.
 
-    The client queries all currently documented QR3 and QR2 wide/deep SIA2
+    The client queries all currently documented DR1 and QR3 wide/deep SIA2
     collections by default.  A custom ``requests.Session`` can be injected for
     tests or application-specific transport configuration.
     """
@@ -240,7 +242,15 @@ class SPHERExClient:
             )
 
         try:
-            document = parse_votable(BytesIO(response.content), verify="exception")
+            # IRSA adds its own harmless formatting hint to FIELD elements.
+            # Astropy does not recognize that extension to the VOTable standard.
+            with warnings.catch_warnings():
+                warnings.filterwarnings(
+                    "ignore",
+                    message=r".*Unknown attribute 'irsa_format'.*",
+                    category=W48,
+                )
+                document = parse_votable(BytesIO(response.content), verify="exception")
             for resource in document.resources:
                 for info in resource.infos:
                     if str(info.name).upper() == "QUERY_STATUS" and str(info.value).upper() == "ERROR":

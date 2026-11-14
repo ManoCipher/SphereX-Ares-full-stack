@@ -1,3 +1,5 @@
+"""Backend IRSA archive discovery client."""
+
 from __future__ import annotations
 
 import json
@@ -105,10 +107,12 @@ class IrsaSiaClient:
         epoch: Time | None = None,
         fallback_on_error: bool = True,
     ) -> pd.DataFrame:
-        """Query collections in preference order, stopping at the first with data."""
+        """Query all selected collections and combine their observation metadata."""
         epoch = epoch or Time.now()
         errors: list[str] = []
-        for collection in collections or self.config.collections:
+        selected_collections = collections or self.config.collections
+        frames: list[pd.DataFrame] = []
+        for collection in selected_collections:
             try:
                 frame = self._search_collection(target, collection, epoch)
             except ArchiveQueryError as exc:
@@ -118,8 +122,15 @@ class IrsaSiaClient:
                     raise
                 continue
             if not frame.empty:
-                return frame.drop_duplicates(subset=["access_url", "obs_id"]).reset_index(drop=True)
-            LOG.info("No matching records in %s", collection)
-        if errors and len(errors) == len(collections or self.config.collections):
+                frames.append(frame)
+            else:
+                LOG.info("No matching records in %s", collection)
+        if errors and len(errors) == len(selected_collections):
             raise ArchiveQueryError("; ".join(errors))
+        if frames:
+            return (
+                pd.concat(frames, ignore_index=True)
+                .drop_duplicates(subset=["access_url", "obs_id"])
+                .reset_index(drop=True)
+            )
         return pd.DataFrame(columns=OBSERVATION_COLUMNS)

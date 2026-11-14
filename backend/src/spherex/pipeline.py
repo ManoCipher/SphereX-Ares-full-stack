@@ -1,3 +1,5 @@
+"""Backend command-line ingestion pipeline."""
+
 from __future__ import annotations
 
 import argparse
@@ -9,7 +11,7 @@ import pandas as pd
 from astropy.time import Time
 
 from .archive_client import ArchiveQueryError, IrsaSiaClient
-from .config import ArchiveConfig, ProjectPaths
+from .config import CURRENT_WIDE_COLLECTIONS, ArchiveConfig, ProjectPaths
 from .downloader import CutoutDownloader
 from .fits_processor import inspect_directory
 from .scientific_visualization import analyze_directory
@@ -28,7 +30,7 @@ def _save(frame: pd.DataFrame, path: Path) -> None:
 
 
 def _config(args: argparse.Namespace) -> ArchiveConfig:
-    collections = (args.collection,) if getattr(args, "collection", None) else ("spherex_qr3", "spherex_qr2")
+    collections = (args.collection,) if getattr(args, "collection", None) else CURRENT_WIDE_COLLECTIONS
     return ArchiveConfig(
         collections=collections,
         search_radius_deg=getattr(args, "search_radius_deg", 0.05),
@@ -118,14 +120,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     discover = sub.add_parser("discover", help="query IRSA SIA2 and save observation metadata")
     common(discover)
-    discover.add_argument("--collection", choices=("spherex_qr3", "spherex_qr2"))
+    discover.add_argument("--collection", choices=CURRENT_WIDE_COLLECTIONS)
     discover.add_argument("--epoch", help="ISO epoch for the initial moving-target search center")
     discover.add_argument("--search-radius-deg", type=float, default=0.05)
     discover.set_defaults(func=command_discover)
 
     download = sub.add_parser("download", help="discover and download bounded IRSA cutouts")
     common(download)
-    download.add_argument("--collection", choices=("spherex_qr3", "spherex_qr2"))
+    download.add_argument("--collection", choices=CURRENT_WIDE_COLLECTIONS)
     download.add_argument("--epoch")
     download.add_argument("--search-radius-deg", type=float, default=0.05)
     download.add_argument("--cutout-size-deg", type=float, default=0.02)

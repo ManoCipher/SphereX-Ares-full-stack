@@ -1,3 +1,5 @@
+"""Backend FITS cutout downloader."""
+
 from __future__ import annotations
 
 import hashlib

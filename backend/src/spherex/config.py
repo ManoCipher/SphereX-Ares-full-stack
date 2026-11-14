@@ -1,13 +1,18 @@
+"""Backend configuration and project paths."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
 
 
+CURRENT_WIDE_COLLECTIONS = ("spherex_dr1", "spherex_qr3")
+
+
 @dataclass(frozen=True)
 class ArchiveConfig:
     sia_url: str = "https://irsa.ipac.caltech.edu/SIA"
-    collections: tuple[str, ...] = ("spherex_qr3", "spherex_qr2")
+    collections: tuple[str, ...] = CURRENT_WIDE_COLLECTIONS
     search_radius_deg: float = 0.05
     cutout_size_deg: float = 0.02
     timeout_seconds: float = 60.0
@@ -32,7 +37,7 @@ class ProjectPaths:
 
     @classmethod
     def default(cls) -> "ProjectPaths":
-        return cls(Path(__file__).resolve().parents[2])
+        return cls(Path(__file__).resolve().parents[3])
 
     def ensure(self) -> None:
         for directory in (self.raw, self.processed, self.metadata, self.plots):

@@ -96,13 +96,25 @@ In the viewer:
 2. Enter a search radius in degrees.
 3. Optionally enter ISO dates such as `2025-07-01` and `2026-01-31`.
 4. Select **Search IRSA**.
-5. Check the **Image** box for one to six observations marked **Downloaded**.
-6. Select **Show Selected Images** to create WCS-centred previews without
-   blocking the window.
-7. Select a gallery card to inspect its FITS filename, dimensions, units,
-   target pixel coordinates, scaling, and observation metadata.
-8. Use **Open selected FITS URL** only when you intentionally want to open the
-   archive file URL.
+5. Choose the palette, linear/asinh stretch, celestial grid and target marker
+   under **Image Display Settings**. Defaults are False Colour, Inferno, Asinh,
+   grid on and target marker on.
+6. Check the **Image** box for one to six observations. They may be downloaded
+   already or still marked **Not downloaded**.
+7. Select **Show Selected Images**. Missing selected FITS cutouts are downloaded
+   automatically before WCS-centred previews are created, without blocking the
+   window.
+8. Select **View Selected Details** to open all checked observations together,
+   including their previews, FITS filenames, dimensions, units, target pixel
+   coordinates, scaling, and observation metadata.
+9. Use **Open FITS URL** inside that details window only when you intentionally
+   want to open an archive file URL.
+
+To make an RGB composite, choose **RGB Composite**, select exactly three rows,
+then select **Generate RGB Composite**. The channel legend reports each
+observation, detector, approximate wavelength and whether wavelength ordering
+or the explicitly labelled selection-order fallback was used. **View Larger**
+and **Save PNG As...** are available beneath the result.
 
 The application is split into two layers:
 

@@ -80,13 +80,33 @@ Launch the interactive FITS image viewer from the repository root with:
 python -m frontend.tkinter_viewer
 ```
 
-The search and FITS processing run on background threads. Check the **Image**
-box for up to six observations whose FITS files have already been downloaded,
-then choose **Show Selected Images**. The viewer resolves files below
-`data/raw`, creates WCS-centred 200 x 200 previews under
-`data/processed/previews`, and displays a comparison gallery. Selecting a card
-shows its source filename, dimensions, units, target pixel and processing
+The search, selected downloads, and FITS processing run on background threads.
+Check the **Image** box for up to six observations, then choose **Show Selected
+Images**. The viewer reuses local files below `data/raw` and automatically
+downloads only the selected observations that are missing. It creates
+WCS-centred 200 x 200 previews under
+`data/processed/previews`, and displays a comparison gallery. **View Selected
+Details** opens a separate scrollable window showing every checked observation,
+its preview, source filename, dimensions, units, target pixel and processing
 metadata. The viewer never changes the original FITS measurements.
+
+### Colour, WCS and RGB display
+
+**Image Display Settings** defaults to an Inferno false-colour palette with an
+asinh stretch, celestial grid and target marker. Individual images can instead
+use greyscale, Viridis, Magma or Plasma, with linear or asinh normalization.
+RA/Dec axes come from each `Cutout2D` WCS rather than from fabricated labels.
+Rendering settings are part of the preview cache key.
+
+For an RGB comparison, choose **RGB Composite**, check exactly three
+observations and select **Generate RGB Composite**. The backend uses `reproject`
+on the original FITS measurements to align all channels to a common celestial
+WCS. When reliable wavelength metadata is available, shortest/intermediate/
+longest wavelengths map to B/G/R. Otherwise the UI explicitly labels the
+selected table-order R/G/B fallback. The output is a representative
+false-colour infrared composite with independently normalized channels, not a
+natural-colour image or calibrated spectral measurement. Use **View Larger** or
+**Save PNG As...** beneath the generated composite.
 
 DR1 and QR3 are both queried and their results are combined. To select one release explicitly, add `--collection spherex_dr1` or `--collection spherex_qr3`.
 

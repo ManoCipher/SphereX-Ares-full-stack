@@ -148,3 +148,42 @@ def test_selection_limit_is_enforced(tmp_path: Path):
     processor = SpherexFitsProcessor(tmp_path / "previews")
     with pytest.raises(ValueError, match="no more than 6"):
         processor.prepare_observation_previews([{}] * 7, 150.25, 2.1)
+
+
+def test_rendering_settings_change_preview_cache_key(tmp_path: Path):
+    path = tmp_path / "science.fits"
+    _write_image(path)
+    processor = SpherexFitsProcessor(tmp_path / "previews")
+    gray = processor.prepare_observation_previews(
+        [{"observation_id": "TEST", "file_path": str(path)}],
+        150.25,
+        2.1,
+        size=20,
+        rendering={"mode": "greyscale", "colormap": "gray", "stretch": "linear"},
+    )[0]
+    inferno = processor.prepare_observation_previews(
+        [{"observation_id": "TEST", "file_path": str(path)}],
+        150.25,
+        2.1,
+        size=20,
+        rendering={"mode": "false_colour", "colormap": "inferno", "stretch": "asinh"},
+    )[0]
+    assert gray["preview_path"] != inferno["preview_path"]
+    assert gray["rendering"]["colormap"] == "gray"
+    assert inferno["rendering"]["colormap"] == "inferno"
+
+
+def test_wcs_wave_image_is_sampled_at_target_pixel(tmp_path: Path):
+    path = tmp_path / "wavelength.fits"
+    wavelength = np.full((100, 100), 2.75, dtype=np.float32)
+    wavelength_header = fits.Header({"BUNIT": "um"})
+    fits.HDUList(
+        [
+            fits.PrimaryHDU(),
+            fits.ImageHDU(np.ones((100, 100)), header=_wcs_header(), name="IMAGE"),
+            fits.ImageHDU(wavelength, header=wavelength_header, name="WCS-WAVE"),
+        ]
+    ).writeto(path)
+    result = SpherexFitsProcessor(tmp_path / "previews").wavelength_at_target(path, 50.0, 50.0)
+    assert result["wavelength_um"] == pytest.approx(2.75)
+    assert result["source"] == "FITS WCS-WAVE image at target"

@@ -14,6 +14,7 @@ dependencies = [
   "numpy>=1.26",
   "pandas>=2.2",
   "pyvo>=1.5",
+  "reproject>=0.14",
   "requests>=2.32",
 ]
 

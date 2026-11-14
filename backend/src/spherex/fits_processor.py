@@ -18,10 +18,13 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from astropy import units as u
 from astropy.coordinates import SkyCoord
 from astropy.io import fits
 from astropy.nddata import Cutout2D
 from astropy.wcs import FITSFixedWarning, WCS
+
+from .image_renderer import ImageRenderingError, SpherexImageRenderer
 
 LOG = logging.getLogger(__name__)
 
@@ -94,6 +97,7 @@ class SpherexFitsProcessor:
 
     def __init__(self, preview_dir: Path | str = "cache/previews") -> None:
         self.preview_dir = Path(preview_dir)
+        self.renderer = SpherexImageRenderer()
 
     @staticmethod
     def _science_hdu_index(hdul: fits.HDUList) -> int:
@@ -275,18 +279,37 @@ class SpherexFitsProcessor:
         ra: float,
         dec: float,
         size: int | tuple[int, int] = 200,
+        rendering: Mapping[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
         """Generate/cached previews for only the supplied observation records."""
         if len(observations) > 6:
             raise ValueError("Select no more than 6 observations for preview generation")
         results: list[dict[str, Any]] = []
+        display = {
+            "mode": "greyscale",
+            "colormap": "gray",
+            "stretch": "linear",
+            "show_grid": False,
+            "show_target": False,
+            **dict(rendering or {}),
+        }
+        display["colormap"] = "gray" if str(display["mode"]).casefold() == "greyscale" else str(display["colormap"]).casefold()
         self.preview_dir.mkdir(parents=True, exist_ok=True)
         for observation in observations:
             result = self._base_result(observation, ra, dec)
             try:
                 file_path = self._record_path(observation)
                 result["fits_filename"] = file_path.name
-                signature = self._cache_signature(file_path, ra, dec, size)
+                cache_settings = {
+                    **display,
+                    "observation_id": result["observation_id"],
+                    "fits_filename": file_path.name,
+                    "detector": observation.get("detector"),
+                    "observation_timestamp": observation.get("observation_timestamp")
+                    or observation.get("obs_time_iso"),
+                    "wcs_rendering_version": 1,
+                }
+                signature = self._cache_signature(file_path, ra, dec, size, cache_settings)
                 safe_id = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(result["observation_id"] or file_path.stem))[:80]
                 preview_path = self.preview_dir / f"{safe_id}_{signature}.png"
                 metadata_path = preview_path.with_suffix(".json")
@@ -298,8 +321,42 @@ class SpherexFitsProcessor:
                     continue
 
                 cutout = self.extract_target(file_path, ra, dec, size)
-                render = self.render_preview(cutout, preview_path)
+                if display["show_grid"] or display["show_target"]:
+                    render = self.renderer.render_wcs_image(
+                        cutout,
+                        ra,
+                        dec,
+                        preview_path,
+                        colormap=str(display["colormap"]),
+                        stretch=str(display["stretch"]),
+                        show_grid=bool(display["show_grid"]),
+                        show_target=bool(display["show_target"]),
+                    )
+                else:
+                    render = self.renderer.render_false_color(
+                        cutout,
+                        preview_path,
+                        colormap=str(display["colormap"]),
+                        stretch=str(display["stretch"]),
+                    )
                 metadata = cutout["metadata"]
+                requested_detector = observation.get("detector")
+                fits_detector = metadata.get("detector")
+                if (
+                    requested_detector not in (None, "")
+                    and fits_detector not in (None, "")
+                    and str(requested_detector).casefold() != str(fits_detector).casefold()
+                ):
+                    raise FitsProcessingError(
+                        f"Resolved FITS detector {fits_detector} does not match selected detector "
+                        f"{requested_detector}"
+                    )
+                wavelength = self.wavelength_at_target(
+                    file_path,
+                    metadata["pixel_x"],
+                    metadata["pixel_y"],
+                    observation,
+                )
                 result.update(
                     status="success",
                     cached=False,
@@ -313,6 +370,11 @@ class SpherexFitsProcessor:
                     brightness_unit=metadata["brightness_unit"],
                     science_hdu_index=metadata["science_hdu_index"],
                     dtype=metadata["dtype"],
+                    fits_detector=fits_detector,
+                    fits_observation_timestamp=metadata.get("observation_timestamp"),
+                    wavelength_um=wavelength["wavelength_um"],
+                    wavelength_source=wavelength["source"],
+                    rendering=display,
                     scaling={key: value for key, value in render.items() if key != "preview_path"},
                 )
                 self._write_cache(metadata_path, signature, result)
@@ -324,13 +386,164 @@ class SpherexFitsProcessor:
                 result.update(status="invalid_wcs", error=str(exc))
             except InvalidImageDataError as exc:
                 result.update(status="invalid_data", error=str(exc))
-            except FitsProcessingError as exc:
+            except (FitsProcessingError, ImageRenderingError) as exc:
                 result.update(status="processing_error", error=str(exc))
             except Exception as exc:
                 LOG.exception("Unexpected preview failure for %s", result["observation_id"])
                 result.update(status="processing_error", error=f"Unexpected preview failure: {exc}")
             results.append(result)
         return results
+
+    def create_rgb_composite(
+        self,
+        observations: Sequence[Mapping[str, Any]],
+        ra: float,
+        dec: float,
+        size: int | tuple[int, int] = 200,
+        rendering: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Extract, align and render exactly three original FITS observations."""
+        if len(observations) != 3:
+            raise ValueError("RGB composite generation requires exactly three observations")
+        settings = {
+            "stretch": "asinh",
+            "show_grid": True,
+            "show_target": True,
+            **dict(rendering or {}),
+        }
+        channel_inputs: list[dict[str, Any]] = []
+        paths: list[Path] = []
+        for observation in observations:
+            path = self._record_path(observation)
+            paths.append(path)
+            cutout = self.extract_target(path, ra, dec, size)
+            metadata = cutout["metadata"]
+            wavelength = self.wavelength_at_target(path, metadata["pixel_x"], metadata["pixel_y"], observation)
+            channel_inputs.append(
+                {
+                    "data": cutout["data"],
+                    "wcs": cutout["wcs"],
+                    "observation_id": observation.get("observation_id") or observation.get("obs_id"),
+                    "detector": observation.get("detector"),
+                    "band": observation.get("band"),
+                    "wavelength_um": wavelength["wavelength_um"],
+                    "wavelength_source": wavelength["source"],
+                    "fits_filename": path.name,
+                }
+            )
+        cache_settings = {
+            **settings,
+            "channels": [
+                {
+                    "observation_id": entry["observation_id"],
+                    "wavelength_um": entry["wavelength_um"],
+                    "wavelength_source": entry["wavelength_source"],
+                }
+                for entry in channel_inputs
+            ],
+        }
+        signature = self._composite_signature(paths, ra, dec, size, cache_settings)
+        destination = self.preview_dir / f"rgb_{signature}.png"
+        metadata_path = destination.with_suffix(".json")
+        cached = self._read_cache(destination, metadata_path, signature)
+        if cached is not None:
+            cached.update(status="success", cached=True)
+            return cached
+        result = self.renderer.create_rgb_composite(
+            channel_inputs,
+            ra,
+            dec,
+            destination,
+            show_grid=bool(settings["show_grid"]),
+            show_target=bool(settings["show_target"]),
+            stretch=str(settings["stretch"]),
+        )
+        result.update(cached=False, fits_filenames=[path.name for path in paths])
+        self._write_cache(metadata_path, signature, result)
+        return result
+
+    def wavelength_at_target(
+        self,
+        file_path: Path | str,
+        pixel_x: float,
+        pixel_y: float,
+        observation: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Return a target wavelength only when a defensible source is available."""
+        path = Path(file_path)
+        try:
+            with fits.open(path, mode="readonly", memmap=False) as hdul:
+                if "IMAGE" in hdul and "WCS-WAVE" in hdul:
+                    spectral_header = hdul["IMAGE"].header.copy()
+                    for key in list(spectral_header):
+                        if key in {"A_ORDER", "B_ORDER", "AP_ORDER", "BP_ORDER"} or re.fullmatch(
+                            r"(?:A|B|AP|BP)_\d+_\d+", key
+                        ):
+                            del spectral_header[key]
+                    try:
+                        with warnings.catch_warnings():
+                            warnings.simplefilter("ignore", FITSFixedWarning)
+                            spectral_wcs = WCS(spectral_header, fobj=hdul, key="W")
+                        spectral_wcs.sip = None
+                        wavelength, _bandwidth = spectral_wcs.pixel_to_world(
+                            float(pixel_x), float(pixel_y)
+                        )
+                        value = float(wavelength.to_value(u.um))
+                        if math.isfinite(value) and value > 0:
+                            return {
+                                "wavelength_um": value,
+                                "source": "FITS alternate WCS-WAVE at target",
+                            }
+                    except Exception:
+                        pass
+                for hdu in hdul:
+                    name = str(hdu.header.get("EXTNAME", "")).upper()
+                    if not any(token in name for token in ("WCS-WAVE", "WAVE", "LAMBDA")):
+                        continue
+                    data = hdu.data
+                    if isinstance(data, np.ndarray) and np.issubdtype(data.dtype, np.number):
+                        array = np.squeeze(data)
+                        if array.ndim == 2:
+                            x, y = int(round(pixel_x)), int(round(pixel_y))
+                            if 0 <= y < array.shape[0] and 0 <= x < array.shape[1]:
+                                converted = self._wavelength_to_um(array[y, x], hdu.header.get("BUNIT"))
+                                if converted is not None:
+                                    return {"wavelength_um": converted, "source": f"FITS {name} image at target"}
+                    names = getattr(data, "names", None)
+                    if names:
+                        for column_name in names:
+                            if not any(token in str(column_name).upper() for token in ("WAVE", "LAMBDA")):
+                                continue
+                            values = np.asarray(data[column_name]).squeeze()
+                            if values.size == 1:
+                                column = hdu.columns[column_name]
+                                converted = self._wavelength_to_um(values.item(), column.unit)
+                                if converted is not None:
+                                    return {"wavelength_um": converted, "source": f"FITS {name}.{column_name}"}
+        except (OSError, ValueError, TypeError):
+            pass
+
+        record = observation or {}
+        lower = record.get("wavelength_min_um")
+        upper = record.get("wavelength_max_um")
+        try:
+            if lower is not None and upper is not None:
+                value = (float(lower) + float(upper)) / 2.0
+                if math.isfinite(value):
+                    return {"wavelength_um": value, "source": "IRSA band midpoint"}
+        except (TypeError, ValueError):
+            pass
+        return {"wavelength_um": None, "source": None}
+
+    @staticmethod
+    def _wavelength_to_um(value: Any, unit: Any) -> float | None:
+        if unit in (None, ""):
+            return None
+        try:
+            result = (float(value) * u.Unit(str(unit))).to_value(u.um)
+            return float(result) if math.isfinite(result) and result > 0 else None
+        except (TypeError, ValueError, u.UnitConversionError):
+            return None
 
     @staticmethod
     def _base_result(observation: Mapping[str, Any], ra: float, dec: float) -> dict[str, Any]:
@@ -353,6 +566,8 @@ class SpherexFitsProcessor:
 
     @staticmethod
     def _record_path(observation: Mapping[str, Any]) -> Path:
+        if observation.get("download_error"):
+            raise FileNotFoundError(f"FITS download failed: {observation['download_error']}")
         keys = ("file_path", "fits_path", "local_path", "download_path", "filename")
         for container in (observation, observation.get("raw_metadata", {})):
             if not isinstance(container, Mapping):
@@ -368,10 +583,29 @@ class SpherexFitsProcessor:
         raise FileNotFoundError("Observation has no downloaded FITS file path")
 
     @staticmethod
-    def _cache_signature(path: Path, ra: float, dec: float, size: Any) -> str:
+    def _cache_signature(
+        path: Path,
+        ra: float,
+        dec: float,
+        size: Any,
+        rendering: Mapping[str, Any] | None = None,
+    ) -> str:
         stat = path.stat()
-        token = f"{path.resolve()}|{stat.st_size}|{stat.st_mtime_ns}|{float(ra):.10f}|{float(dec):.10f}|{size}"
+        settings = json.dumps(dict(rendering or {}), sort_keys=True, default=str)
+        token = f"{path.resolve()}|{stat.st_size}|{stat.st_mtime_ns}|{float(ra):.10f}|{float(dec):.10f}|{size}|{settings}"
         return hashlib.sha256(token.encode("utf-8")).hexdigest()[:16]
+
+    @classmethod
+    def _composite_signature(
+        cls,
+        paths: Sequence[Path],
+        ra: float,
+        dec: float,
+        size: Any,
+        rendering: Mapping[str, Any],
+    ) -> str:
+        tokens = [cls._cache_signature(path, ra, dec, size, rendering) for path in paths]
+        return hashlib.sha256("|".join(tokens).encode("utf-8")).hexdigest()[:16]
 
     @staticmethod
     def _read_cache(preview: Path, metadata: Path, signature: str) -> dict[str, Any] | None:

@@ -50,8 +50,13 @@ class BlinkWindow:
 
         self.status = tk.StringVar(value="Downloading / aligning frames on the sky grid...")
         ttk.Label(self.window, textvariable=self.status, anchor="w", wraplength=720).pack(fill="x", padx=10, pady=(8, 2))
-        self.image_label = ttk.Label(self.window, anchor="center")
-        self.image_label.pack(fill="both", expand=True, padx=8, pady=4)
+        # A canvas (not a label) so measured positions can be drawn over the frame
+        # and clicks can start a candidate investigation.
+        self.canvas = tk.Canvas(self.window, width=500, height=460, highlightthickness=0, cursor="crosshair")
+        self.canvas.pack(expand=True, padx=8, pady=4)
+        self._canvas_image = self.canvas.create_image(0, 0, anchor="nw")
+        self.canvas.bind("<Button-1>", self._on_click)
+        self._report: dict[str, Any] | None = None
         self.caption = tk.StringVar(value="")
         ttk.Label(self.window, textvariable=self.caption, justify="left", wraplength=720).pack(fill="x", padx=10)
 
@@ -166,17 +171,98 @@ class BlinkWindow:
         if not self._images or self._result is None:
             return
         if self.show_difference.get():
-            self.image_label.configure(image=self._difference)
-            self.caption.set("Difference: last frame minus first. Fixed stars cancel; a moving object leaves a dark/bright pair.")
+            self.canvas.itemconfigure(self._canvas_image, image=self._difference)
+            self.caption.set("Difference: last frame minus first. Fixed stars cancel; a moving object leaves a dark/bright pair."
+                             "  Click a source to investigate it.")
+            self._draw_markers()
             return
-        self.image_label.configure(image=self._images[self._index])
+        self.canvas.itemconfigure(self._canvas_image, image=self._images[self._index])
         meta = self._result["metadata"][self._index]
         wavelength = meta.get("wavelength_um")
         wavelength_text = f"{wavelength:.3f} µm" if isinstance(wavelength, (int, float)) else "wavelength unknown"
         self.caption.set(
             f"Frame {self._index + 1}/{len(self._images)}  |  {meta.get('observation_timestamp') or 'date unknown'}  |  "
             f"{meta.get('observation_id')}  |  D{meta.get('detector') or '-'}  |  {wavelength_text}"
+            "\nClick a suspected moving object to investigate it."
         )
+        self._draw_markers()
+
+    # --- candidate investigation -------------------------------------------------
+
+    def _on_click(self, event: Any) -> None:
+        """Turn a click into an image pixel, measure that source in every frame, show the report."""
+        from spherex.blink import png_to_image_pixel
+        from spherex.candidate import investigate_candidate
+
+        if self._result is None or "pixel_mapping" not in self._result:
+            return
+        x, y = png_to_image_pixel(self._result["pixel_mapping"], float(event.x), float(event.y))
+        height, width = self._result["aligned"]["frames"][0].shape
+        if not (-0.5 <= x <= width - 0.5 and -0.5 <= y <= height - 0.5):
+            self.status.set("Click inside the image (not on the axes) to investigate a source.")
+            return
+        clicked_frame = 0 if self.show_difference.get() else self._index
+        try:
+            report = investigate_candidate(self._result["aligned"], x, y, clicked_frame=clicked_frame)
+        except Exception as exc:  # report, never crash the blink window
+            self.status.set(f"Candidate investigation failed: {exc}")
+            return
+        if self._playing:
+            self._toggle_play()  # hold the frame the user clicked on
+        self._report = report
+        self._draw_markers()
+        self.status.set(f"Candidate: {report['verdict']}. {report.get('explanation', '')}")
+        self._show_report(report)
+
+    def _draw_markers(self) -> None:
+        """Circles at the measured position in every frame; the shown frame's one is highlighted."""
+        from spherex.blink import image_pixel_to_png
+
+        self.canvas.delete("marker")
+        if self._report is None or self._result is None:
+            return
+        mapping = self._result["pixel_mapping"]
+        click = self._report["click"]
+        cx, cy = image_pixel_to_png(mapping, click["x"], click["y"])
+        self.canvas.create_line(cx - 6, cy, cx + 6, cy, fill="yellow", tags="marker")
+        self.canvas.create_line(cx, cy - 6, cx, cy + 6, fill="yellow", tags="marker")
+        current = None if self.show_difference.get() else self._index + 1
+        for row in self._report["measurements"]:
+            if not row["found"]:
+                continue
+            px, py = image_pixel_to_png(mapping, row["x"], row["y"])
+            radius, colour, width = (9, "cyan", 2) if row["frame"] == current else (5, "white", 1)
+            self.canvas.create_oval(px - radius, py - radius, px + radius, py + radius,
+                                    outline=colour, width=width, tags="marker")
+
+    def _show_report(self, report: Mapping[str, Any]) -> None:
+        import tkinter as tk
+        from tkinter import filedialog, ttk
+
+        from spherex.candidate import format_report
+
+        text = format_report(report)
+        window = tk.Toplevel(self.window)
+        window.title(f"Candidate investigation: {report['verdict']}")
+        window.geometry("860x420")
+        box = tk.Text(window, wrap="none", font=("Consolas", 10))
+        box.insert("1.0", text)
+        box.configure(state="disabled")
+        box.pack(fill="both", expand=True, padx=8, pady=(8, 4))
+        buttons = ttk.Frame(window)
+        buttons.pack(fill="x", padx=8, pady=(0, 8))
+
+        def save() -> None:
+            destination = filedialog.asksaveasfilename(
+                parent=window, title="Save candidate report", defaultextension=".txt",
+                filetypes=(("Text report", "*.txt"),),
+            )
+            if destination:
+                Path(destination).write_text(text, encoding="utf-8")
+                self.status.set(f"Candidate report saved to {destination}")
+
+        ttk.Button(buttons, text="Save report...", command=save).pack(side="right")
+        ttk.Button(buttons, text="Close", command=window.destroy).pack(side="right", padx=6)
 
     def _step(self, delta: int) -> None:
         if not self._images:

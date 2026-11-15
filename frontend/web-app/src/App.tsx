@@ -175,21 +175,21 @@ export function App() {
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
           <img
-            src="/spherex-emblem.svg"
-            alt="SPHEREx"
-            style={{ width: '30px', height: '30px', borderRadius: '50%', backgroundColor: '#070b14', padding: '2px', border: '1px solid #1e293b' }}
+            src="/ares-nebula-logo.jpg"
+            alt="Ares Nebula"
+            style={{ width: '38px', height: '38px', borderRadius: '50%', objectFit: 'cover', border: '1px solid #38bdf8', boxShadow: '0 0 10px rgba(56, 189, 248, 0.3)' }}
           />
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <h1 style={{ fontSize: '15px', fontWeight: 'bold', margin: 0, color: '#fff' }}>
-                SPHEREx Observation Portal
+              <h1 style={{ fontSize: '16px', fontWeight: 'bold', margin: 0, color: '#fff', letterSpacing: '0.04em' }}>
+                ARES NEBULA <span style={{ color: '#94a3b8', fontWeight: 'normal' }}>| SPHEREx Portal</span>
               </h1>
               <span style={{ fontSize: '10px', padding: '2px 6px', borderRadius: '4px', backgroundColor: 'rgba(56, 189, 248, 0.1)', color: '#38bdf8', border: '1px solid rgba(56, 189, 248, 0.3)', fontFamily: 'monospace' }}>
                 NASA Space Apps
               </span>
             </div>
-            <p style={{ fontSize: '11px', color: '#64748b', margin: '2px 0 0 0' }}>
-              Visible RGB Composite • WCS-Aligned Temporal Astrometry • Point-Source Centroiding
+            <p style={{ fontSize: '11px', color: '#64748b', margin: '2px 0 0 0', letterSpacing: '0.08em' }}>
+              EXPLORE • ANALYZE • DISCOVER
             </p>
           </div>
         </div>

@@ -6,8 +6,7 @@ import { TemporalControls } from './components/TemporalControls';
 import { SpectralControls } from './components/SpectralControls';
 import { ImageGallery } from './components/ImageGallery';
 import { CandidateModal } from './components/CandidateModal';
-
-const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000';
+import { apiUrl, errorMessage, fetchJson } from './api';
 
 export function App() {
   const [targets, setTargets] = useState<Target[]>([]);
@@ -56,8 +55,7 @@ export function App() {
 
   // 1. Initial Load: Fetch targets metadata (presets)
   useEffect(() => {
-    fetch(`${API_BASE}/api/targets`)
-      .then((res) => res.json())
+    fetchJson<Target[]>('/api/targets')
       .then((data: Target[]) => {
         if (Array.isArray(data)) {
           setTargets(data);
@@ -70,8 +68,7 @@ export function App() {
   // 2. Fetch Spectral SED data when switching to Spectral mode
   useEffect(() => {
     if (activeDomain === 'spectral' && fetchedExposures.length > 0) {
-      fetch(`${API_BASE}/api/sed`)
-        .then((res) => res.json())
+      fetchJson<SedPoint[]>('/api/sed')
         .then((data: SedPoint[]) => {
           if (Array.isArray(data)) setSedData(data);
         })
@@ -99,26 +96,26 @@ export function App() {
       ...(endDate ? { end_date: endDate } : {}),
     });
 
-    fetch(`${API_BASE}/api/search?${queryParams}`)
-      .then((res) => res.json())
+    fetchJson<{ observations?: any[] }>(`/api/search?${queryParams}`)
       .then(() => {
         setLoadingMessage('Downloading bounded FITS cutouts from IRSA IBE...');
         const mode = activeDomain === 'spectral' ? 'spectral' : 'time';
-        return fetch(`${API_BASE}/api/fetch_cutouts?ra=${ra}&dec=${dec}&radius=${radius}&max_files=${maxResults}&mode=${mode}`);
+        return fetchJson<{ records?: FitsRecord[]; status?: string; message?: string }>(
+          `/api/fetch_cutouts?ra=${ra}&dec=${dec}&radius=${radius}&max_files=${maxResults}&mode=${mode}`
+        );
       })
-      .then((res) => res.json())
       .then((data) => {
         if (data.records && Array.isArray(data.records) && data.records.length > 0) {
           setFetchedExposures(data.records);
           setEpochIdx(0);
           setStatusMessage(`Successfully loaded ${data.records.length} observation cutout(s).`);
         } else {
-          setStatusMessage('No SPHEREx observations found for these coordinates. Try a benchmark preset.');
+          setStatusMessage(data.message || 'No SPHEREx observations found for these coordinates. Try a benchmark preset.');
         }
         setIsQuerying(false);
       })
-      .catch(() => {
-        setStatusMessage('Network request to backend failed. Please verify API server status.');
+      .catch((err) => {
+        setStatusMessage(errorMessage(err) || 'Network request to backend failed. Please verify API server status.');
         setIsQuerying(false);
       });
   };
@@ -135,28 +132,28 @@ export function App() {
     setCandidateReport(null);
 
     const mode = activeDomain === 'spectral' ? 'spectral' : 'time';
-    fetch(`${API_BASE}/api/smart_select?ra=${ra}&dec=${dec}&radius=${radius}&mode=${mode}`)
-      .then((res) => res.json())
+    fetchJson<SmartSelectResult>(`/api/smart_select?ra=${ra}&dec=${dec}&radius=${radius}&mode=${mode}`)
       .then((data: SmartSelectResult) => {
         if (data?.explanation) {
           setSmartExplanation(data.explanation);
         }
         setLoadingMessage('Downloading prioritized FITS cutouts from NASA IRSA...');
-        return fetch(`${API_BASE}/api/fetch_cutouts?ra=${ra}&dec=${dec}&radius=${radius}&max_files=${maxResults}&smart=1&mode=${mode}`);
+        return fetchJson<{ records?: FitsRecord[]; status?: string; message?: string }>(
+          `/api/fetch_cutouts?ra=${ra}&dec=${dec}&radius=${radius}&max_files=${maxResults}&smart=1&mode=${mode}`
+        );
       })
-      .then((res) => res.json())
       .then((data) => {
         if (data.records && Array.isArray(data.records) && data.records.length > 0) {
           setFetchedExposures(data.records);
           setEpochIdx(0);
           setStatusMessage(`Loaded ${data.records.length} optimal observation cutout(s).`);
         } else {
-          setStatusMessage('No matching observations found for smart selection.');
+          setStatusMessage(data.message || 'No matching observations found for smart selection.');
         }
         setIsSmartSelecting(false);
       })
-      .catch(() => {
-        setStatusMessage('Smart selection failed. Please verify server connectivity.');
+      .catch((err) => {
+        setStatusMessage(errorMessage(err) || 'Smart selection failed. Please verify server connectivity.');
         setIsSmartSelecting(false);
       });
   };
@@ -189,8 +186,7 @@ export function App() {
     if (fetchedExposures.length === 0) return;
     setInvestigationMarker({ x: normX, y: normY });
     setIsInvestigating(true);
-    fetch(`${API_BASE}/api/investigate?x=${normX}&y=${normY}&frame=${epochIdx}`)
-      .then((res) => res.json())
+    fetchJson<any>(`/api/investigate?x=${normX}&y=${normY}&frame=${epochIdx}`)
       .then((report) => {
         setCandidateReport(report);
         setIsInvestigating(false);
@@ -231,11 +227,11 @@ export function App() {
   if (filteredExposures.length > 0) {
     if (isDifferenceMode && activeDomain === 'temporal') {
       const diffLast = totalEpochs > 1 ? (epochIdx > 0 ? epochIdx : totalEpochs - 1) : 1;
-      imageSrc = `${API_BASE}/api/difference?first=0&last=${diffLast}&colormap=${colormap === 'rgb' ? 'coolwarm' : colormap}&clean=${cleanImage ? '1' : '0'}&invert=${invert ? '1' : '0'}`;
+      imageSrc = apiUrl(`/api/difference?first=0&last=${diffLast}&colormap=${colormap === 'rgb' ? 'coolwarm' : colormap}&clean=${cleanImage ? '1' : '0'}&invert=${invert ? '1' : '0'}`);
     } else if (activeDomain === 'spectral' && rgbMode) {
-      imageSrc = `${API_BASE}/api/rgb`;
+      imageSrc = apiUrl('/api/rgb');
     } else {
-      imageSrc = `${API_BASE}/api/render?filename=${encodeURIComponent(activeFitsFile)}&colormap=${colormap}&stretch=${stretch}&min_cut_percent=${minCutPercent}&max_cut_percent=${maxCutPercent}&clean=${cleanImage ? '1' : '0'}&invert=${invert ? '1' : '0'}`;
+      imageSrc = apiUrl(`/api/render?filename=${encodeURIComponent(activeFitsFile)}&colormap=${colormap}&stretch=${stretch}&min_cut_percent=${minCutPercent}&max_cut_percent=${maxCutPercent}&clean=${cleanImage ? '1' : '0'}&invert=${invert ? '1' : '0'}`);
     }
   }
 

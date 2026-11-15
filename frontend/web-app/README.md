@@ -1,5 +1,22 @@
 # React + TypeScript + Vite
 
+## SPHEREx backend integration
+
+The UI calls the Python service through `VITE_API_BASE_URL`. For local
+development, leave it unset and run the API on `http://127.0.0.1:8000`; Vite
+proxies `/api` automatically.
+
+For Vercel, add this project environment variable for Production, Preview, and
+Development:
+
+```text
+VITE_API_BASE_URL=https://your-deployed-backend.example.com
+```
+
+The value must be the backend origin only, with no trailing `/api`. The backend
+must expose `/api/health`, `/api/targets`, and the other routes implemented in
+`backend/src/spherex/api_server.py`.
+
 This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
 
 Currently, two official plugins are available:

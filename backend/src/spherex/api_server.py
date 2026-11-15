@@ -15,6 +15,8 @@ import json
 import logging
 import os
 import sys
+import threading
+import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -58,6 +60,10 @@ def _safe_float(val: Any, default: float) -> float:
 
 class SpherexApiHandler(BaseHTTPRequestHandler):
     client = SPHERExClient(collections=("spherex_dr1",), timeout=25)
+    # requests.Session is not guaranteed to be thread-safe. Render serves
+    # multiple browser requests concurrently, so serialize archive access and
+    # retry transient IRSA/VOTable failures before reporting no observations.
+    archive_lock = threading.Lock()
     # Fast 0.08° cutout (WiseView style ~48x48 to 100x100 pixel window) for instant downloads
     service = ObservationPreviewService(download_cutout_size_deg=0.08)
     selector = ObservationSelectionService(path_resolver=service.resolve_fits_path)
@@ -75,7 +81,9 @@ class SpherexApiHandler(BaseHTTPRequestHandler):
         query = urllib.parse.parse_qs(parsed.query)
 
         try:
-            if path == "/api/targets":
+            if path == "/api/health":
+                self.send_json({"status": "ok", "service": "spherex-api"})
+            elif path == "/api/targets":
                 self.handle_targets()
             elif path == "/api/search":
                 self.handle_search(query)
@@ -136,6 +144,25 @@ class SpherexApiHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(image_bytes)
 
+    @classmethod
+    def search_archive(cls, **kwargs: Any) -> list[dict[str, Any]]:
+        last_error: Exception | None = None
+        with cls.archive_lock:
+            for attempt in range(3):
+                try:
+                    return list(cls.client.search(**kwargs))
+                except Exception as exc:
+                    last_error = exc
+                    LOG.warning(
+                        "IRSA search attempt %d/3 failed: %s",
+                        attempt + 1,
+                        exc,
+                    )
+                    if attempt < 2:
+                        time.sleep(2**attempt)
+        assert last_error is not None
+        raise last_error
+
     def handle_targets(self) -> None:
         """Serve target definitions directly from your team's backend/src/spherex/targets.py."""
         result = []
@@ -163,7 +190,7 @@ class SpherexApiHandler(BaseHTTPRequestHandler):
         max_results = int(query.get("max_results", ["50"])[0])
 
         try:
-            observations = self.client.search(
+            observations = self.search_archive(
                 ra=ra,
                 dec=dec,
                 radius=radius,
@@ -206,7 +233,7 @@ class SpherexApiHandler(BaseHTTPRequestHandler):
         mode = SelectionMode.SPECTRAL if mode_str == "spectral" else SelectionMode.TIME
 
         try:
-            observations = self.client.search(ra=ra, dec=dec, radius=radius, max_results=50)
+            observations = self.search_archive(ra=ra, dec=dec, radius=radius, max_results=50)
         except Exception as exc:
             LOG.warning("IRSA live search unreachable in smart_select (%s). Using local records.", exc)
             files = list(self.paths.raw.glob("**/*.fits"))
@@ -252,7 +279,7 @@ class SpherexApiHandler(BaseHTTPRequestHandler):
 
         try:
             # 1. Discover observations at user coordinates (fast DR1 targeted search)
-            observations = self.client.search(ra=ra, dec=dec, radius=radius, max_results=max_files * 2)
+            observations = self.search_archive(ra=ra, dec=dec, radius=radius, max_results=max_files * 2)
         except Exception as exc:
             LOG.warning("IRSA live cutout search unreachable (%s). Serving cached local files.", exc)
             observations = []
@@ -736,6 +763,7 @@ def run_server(port: int | None = None) -> None:
     # Render and cloud platforms supply PORT as an environment variable
     effective_port = port or int(os.environ.get("PORT", 8000))
     host = os.environ.get("HOST", "0.0.0.0")
+    SpherexApiHandler.paths.ensure()
     server = ThreadingHTTPServer((host, effective_port), SpherexApiHandler)
     LOG.info("SPHEREx Real Data API running at http://%s:%d", host, effective_port)
     server.serve_forever()

@@ -76,16 +76,29 @@ export function App() {
     }
   }, [activeDomain, fetchedExposures]);
 
+  // Helper: Refresh and reset all ongoing actions and displayed data when initiating a new query or switching target
+  const resetActiveSession = () => {
+    setIsPlaying(false);
+    setIsBlinkActive(false);
+    setIsDifferenceMode(false);
+    setRgbMode(false);
+    setFetchedExposures([]);
+    setEpochIdx(0);
+    setSelectedDetector('all');
+    setInvestigationMarker(null);
+    setCandidateReport(null);
+    setSmartExplanation('');
+    setSedData([]);
+  };
+
   // 3. User Query Action: Perform search and ingest fresh cutouts
   const handlePerformQuery = () => {
     if (!ra.trim() || !dec.trim()) return;
 
+    resetActiveSession();
     setIsQuerying(true);
     setLoadingMessage('Querying NASA/IPAC IRSA SIA2 Archive...');
     setStatusMessage('');
-    setSmartExplanation('');
-    setInvestigationMarker(null);
-    setCandidateReport(null);
 
     const queryParams = new URLSearchParams({
       ra,
@@ -124,12 +137,10 @@ export function App() {
   const handleSmartSelect = () => {
     if (!ra.trim() || !dec.trim()) return;
 
+    resetActiveSession();
     setIsSmartSelecting(true);
     setLoadingMessage('Running astronomical multi-epoch observation selector...');
     setStatusMessage('');
-    setSmartExplanation('');
-    setInvestigationMarker(null);
-    setCandidateReport(null);
 
     const mode = activeDomain === 'spectral' ? 'spectral' : 'time';
     fetchJson<SmartSelectResult>(`/api/smart_select?ra=${ra}&dec=${dec}&radius=${radius}&mode=${mode}`)
@@ -160,24 +171,18 @@ export function App() {
 
   // Preset Selection Handlers
   const handleSelectTarget = (t: Target) => {
+    resetActiveSession();
     setSelectedTargetId(t.id);
     setRa(t.ra_deg.toFixed(4));
     setDec(t.dec_deg.toFixed(4));
-    setEpochIdx(0);
-    setInvestigationMarker(null);
-    setCandidateReport(null);
-    setSmartExplanation('');
     setStatusMessage(`Target ${t.name} selected. Click Fetch FITS or Auto Select.`);
   };
 
   const handleClearTarget = () => {
+    resetActiveSession();
     setSelectedTargetId('');
     setRa('');
     setDec('');
-    setEpochIdx(0);
-    setInvestigationMarker(null);
-    setCandidateReport(null);
-    setSmartExplanation('');
     setStatusMessage('');
   };
 

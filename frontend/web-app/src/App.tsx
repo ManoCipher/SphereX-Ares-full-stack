@@ -376,10 +376,10 @@ export function App() {
           </div>
         </div>
 
-        {/* Workspace: Unobstructed Canvas & Responsive Controls */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: '16px' }}>
+        {/* Workspace: Responsive Split Layout */}
+        <div className="ares-workspace-grid">
           {/* Left: Clean FITS Canvas */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', minWidth: 0, width: '100%' }}>
             <BlinkCanvas
               imageSrc={imageSrc}
               activeFilename={activeFitsFile}
@@ -392,7 +392,7 @@ export function App() {
           </div>
 
           {/* Right: Dimension & Calibration Controls */}
-          <div>
+          <div style={{ minWidth: 0, width: '100%' }}>
             {activeDomain === 'temporal' ? (
               <TemporalControls
                 isBlinkActive={isBlinkActive}

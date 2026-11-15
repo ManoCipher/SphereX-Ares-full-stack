@@ -37,12 +37,7 @@ export const ImageGallery: React.FC<ImageGalleryProps> = ({
       </div>
 
       {/* Horizontal Scrollable Exposure Cards */}
-      <div style={{
-        display: 'flex',
-        gap: '8px',
-        overflowX: 'auto',
-        paddingBottom: '4px',
-      }}>
+      <div className="ares-gallery-scroll">
         {exposures.map((exp, idx) => {
           const isActive = exp.filename === activeFilename;
           return (

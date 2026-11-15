@@ -86,8 +86,9 @@ export const BlinkCanvas: React.FC<BlinkCanvasProps> = ({
     <div style={{
       position: 'relative',
       width: '100%',
+      maxWidth: '100%',
       aspectRatio: '1/1',
-      maxHeight: '480px',
+      maxHeight: 'min(70vh, 520px)',
       backgroundColor: '#000',
       borderRadius: '8px',
       border: '1px solid #1e293b',

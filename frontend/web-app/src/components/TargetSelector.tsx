@@ -143,12 +143,7 @@ export const TargetSelector: React.FC<TargetSelectorProps> = ({
       )}
 
       {/* Coordinate & Search Form */}
-      <div style={{
-        display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fit, minmax(110px, 1fr))',
-        gap: '8px',
-        alignItems: 'end',
-      }}>
+      <div className="ares-search-grid">
         <div>
           <label style={{ display: 'block', color: '#94a3b8', fontSize: '10px', marginBottom: '3px' }}>RA (deg)</label>
           <input
@@ -223,7 +218,7 @@ export const TargetSelector: React.FC<TargetSelectorProps> = ({
           />
         </div>
 
-        <div style={{ display: 'flex', gap: '6px' }}>
+        <div className="ares-actions-group" style={{ display: 'flex', gap: '6px' }}>
           <button
             onClick={onQuery}
             disabled={!hasCoordinates || isQuerying || isSmartSelecting}

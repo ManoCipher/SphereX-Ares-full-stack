@@ -51,6 +51,8 @@ export function App() {
 
   // Hyperspectral features
   const [rgbMode, setRgbMode] = useState<boolean>(false);
+  const [coaddDetector, setCoaddDetector] = useState<string>('off');
+  const [spectrumSourceCoord, setSpectrumSourceCoord] = useState<{ x: number; y: number } | null>(null);
   const [sedData, setSedData] = useState<SedPoint[]>([]);
 
   // 1. Initial Load: Fetch targets metadata (presets)
@@ -82,6 +84,8 @@ export function App() {
     setIsBlinkActive(false);
     setIsDifferenceMode(false);
     setRgbMode(false);
+    setCoaddDetector('off');
+    setSpectrumSourceCoord(null);
     setFetchedExposures([]);
     setEpochIdx(0);
     setSelectedDetector('all');
@@ -186,9 +190,21 @@ export function App() {
     setStatusMessage('');
   };
 
-  // 5. Candidate Click Investigation Handler
+  // 5. Candidate Click Investigation Handler & On-the-fly Spectrum Extraction
   const handleCanvasClick = (normX: number, normY: number) => {
     if (fetchedExposures.length === 0) return;
+
+    if (activeDomain === 'spectral') {
+      // In spectral mode: extract on-the-fly spectrum at clicked pixel
+      setSpectrumSourceCoord({ x: normX, y: normY });
+      fetchJson<SedPoint[]>(`/api/sed?x=${normX}&y=${normY}`)
+        .then((data: SedPoint[]) => {
+          if (Array.isArray(data)) setSedData(data);
+        })
+        .catch(() => {});
+      return;
+    }
+
     setInvestigationMarker({ x: normX, y: normY });
     setIsInvestigating(true);
 
@@ -230,14 +246,18 @@ export function App() {
     return () => clearInterval(interval);
   }, [isBlinkActive, isPlaying, fps, totalEpochs, activeDomain]);
 
-  // Streaming Image URL: Difference mode, single-band (inferno/viridis/gray), or RGB in spectral
+  // Streaming Image URL: Difference mode, single-band (inferno/viridis/gray), RGB, or Array Co-addition
   let imageSrc: string = '';
   if (filteredExposures.length > 0) {
     if (isDifferenceMode && activeDomain === 'temporal') {
       const diffLast = totalEpochs > 1 ? (epochIdx > 0 ? epochIdx : totalEpochs - 1) : 1;
       imageSrc = apiUrl(`/api/difference?first=0&last=${diffLast}&colormap=${colormap === 'rgb' ? 'coolwarm' : colormap}&clean=${cleanImage ? '1' : '0'}&invert=${invert ? '1' : '0'}`);
     } else if (activeDomain === 'spectral' && rgbMode) {
-      imageSrc = apiUrl('/api/rgb');
+      const fileParam = fetchedExposures.map((e) => encodeURIComponent(e.filename)).join(',');
+      imageSrc = apiUrl(`/api/rgb?files=${fileParam}`);
+    } else if (activeDomain === 'spectral' && coaddDetector !== 'off') {
+      const fileParam = fetchedExposures.map((e) => encodeURIComponent(e.filename)).join(',');
+      imageSrc = apiUrl(`/api/coadd?detector=${coaddDetector}&colormap=${colormap}&stretch=${stretch}&files=${fileParam}`);
     } else {
       imageSrc = apiUrl(`/api/render?filename=${encodeURIComponent(activeFitsFile)}&colormap=${colormap}&stretch=${stretch}&min_cut_percent=${minCutPercent}&max_cut_percent=${maxCutPercent}&clean=${cleanImage ? '1' : '0'}&invert=${invert ? '1' : '0'}`);
     }
@@ -446,6 +466,9 @@ export function App() {
                 rgbMode={rgbMode}
                 onToggleRgb={() => setRgbMode(!rgbMode)}
                 sedData={sedData}
+                coaddDetector={coaddDetector}
+                onChangeCoaddDetector={setCoaddDetector}
+                spectrumSourceCoord={spectrumSourceCoord}
               />
             )}
           </div>

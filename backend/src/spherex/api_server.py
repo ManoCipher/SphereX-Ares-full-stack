@@ -99,6 +99,8 @@ class SpherexApiHandler(BaseHTTPRequestHandler):
                 self.handle_rgb(query)
             elif path == "/api/sed":
                 self.handle_sed(query)
+            elif path == "/api/coadd":
+                self.handle_coadd(query)
             elif path == "/api/difference":
                 self.handle_difference(query)
             elif path == "/api/local_fits":
@@ -615,37 +617,116 @@ class SpherexApiHandler(BaseHTTPRequestHandler):
         self.send_image(buf.getvalue())
 
     def handle_rgb(self, query: dict[str, list[str]]) -> None:
-        """Real 3-Band Hyperspectral RGB Composite of SPHEREx detector channels."""
-        files = list(self.paths.raw.glob("**/*.fits"))
+        """WCS-aligned 3-band astronomical false color composite (Short=Blue, Mid=Green, Long=Red)."""
+        files_param = query.get("files", [None])[0]
+        if files_param:
+            requested_names = [name.strip() for name in files_param.split(",") if name.strip()]
+            files = []
+            for name in requested_names:
+                matches = list(self.paths.raw.glob(f"**/{name}"))
+                if matches:
+                    files.append(matches[0])
+        else:
+            files = list(self.paths.raw.glob("**/*.fits"))
+
         if len(files) < 3:
-            self.send_error(400, "Need at least 3 FITS files to compose an RGB hyperspectral view")
+            self.send_error(400, "Need at least 3 FITS files from the active query to compose an RGB hyperspectral view")
             return
 
-        # Pick 3 files representing blue (short NIR), green (mid NIR), red (long NIR)
-        r_file, g_file, b_file = files[0], files[1], files[2]
-        with fits.open(r_file) as hr, fits.open(g_file) as hg, fits.open(b_file) as hb:
-            dr = hr["IMAGE"].data if "IMAGE" in hr else hr[0].data
-            dg = hg["IMAGE"].data if "IMAGE" in hg else hg[0].data
-            db = hb["IMAGE"].data if "IMAGE" in hb else hb[0].data
+        from astropy.wcs import WCS
+        candidates = []
+        for f in files:
+            with fits.open(f) as hdul:
+                hdr = hdul["IMAGE"].header if "IMAGE" in hdul else hdul[0].header
+                data = hdul["IMAGE"].data if "IMAGE" in hdul else hdul[0].data
+                det = str(hdr.get("DETECTOR", "3"))
+                det_wavel = {"1": 0.92, "2": 1.35, "3": 2.00, "4": 3.10, "5": 4.10, "6": 4.70}
+                wavel = float(hdr.get("WAVELMIN", det_wavel.get(det, 2.0)))
+                wcs = WCS(hdr)
+                candidates.append({
+                    "data": np.asarray(data, dtype=float),
+                    "wcs": wcs,
+                    "wavelength_um": wavel,
+                    "detector": det,
+                    "filename": f.name,
+                })
 
-        # Resize/crop arrays to smallest matching shape
-        min_h = min(dr.shape[0], dg.shape[0], db.shape[0])
-        min_w = min(dr.shape[1], dg.shape[1], db.shape[1])
-        r_crop, g_crop, b_crop = dr[:min_h, :min_w], dg[:min_h, :min_w], db[:min_h, :min_w]
+        # Sort all cutouts by wavelength ascending
+        candidates.sort(key=lambda c: c["wavelength_um"])
 
-        # Stretch channels with asinh
-        nr, _ = self.renderer.normalize(r_crop, stretch="asinh")
-        ng, _ = self.renderer.normalize(g_crop, stretch="asinh")
-        nb, _ = self.renderer.normalize(b_crop, stretch="asinh")
+        # Pick 3 cutouts with greatest spectral separation (Shortest -> Blue, Median -> Green, Longest -> Red)
+        b_input = candidates[0]
+        r_input = candidates[-1]
+        mid_idx = len(candidates) // 2
+        g_input = candidates[mid_idx]
+        if g_input["filename"] == b_input["filename"] or g_input["filename"] == r_input["filename"]:
+            # Pick any distinct middle candidate
+            distinct = [c for c in candidates if c["filename"] not in (b_input["filename"], r_input["filename"])]
+            g_input = distinct[0] if distinct else candidates[1]
 
-        rgb = np.stack([nr, ng, nb], axis=-1)
+        channel_inputs = [b_input, g_input, r_input]
+
+        try:
+            from reproject import reproject_interp
+            reference = g_input
+            ref_wcs = reference["wcs"]
+            ref_shape = reference["data"].shape
+
+            aligned_channels = {}
+            footprints = []
+            for ch_key, entry in (("B", b_input), ("G", g_input), ("R", r_input)):
+                if entry is reference:
+                    proj = np.array(entry["data"], dtype=float, copy=True)
+                    fp = np.isfinite(proj).astype(float)
+                else:
+                    proj, fp = reproject_interp((entry["data"], entry["wcs"]), ref_wcs, shape_out=ref_shape)
+                aligned_channels[ch_key] = proj
+                footprints.append(np.isfinite(proj) & (fp > 0.0))
+
+            common_mask = np.logical_and.reduce(footprints)
+            if not common_mask.any():
+                common_mask = np.ones(ref_shape, dtype=bool)
+
+            # Smoothly stretch each WCS-aligned channel using asinh
+            normalized = {}
+            for ch in ("R", "G", "B"):
+                ch_data = np.where(common_mask, aligned_channels[ch], np.nan)
+                finite = ch_data[np.isfinite(ch_data)]
+                if finite.size > 0:
+                    low, high = float(np.percentile(finite, 1.0)), float(np.percentile(finite, 99.5))
+                    high = high if high > low else low + 1.0
+                    scaled = np.clip((ch_data - low) / (high - low), 0.0, 1.0)
+                    softness = 8.0
+                    normalized[ch] = np.arcsinh(softness * scaled) / np.arcsinh(softness)
+                else:
+                    normalized[ch] = np.zeros(ref_shape, dtype=float)
+
+            rgb = np.dstack((normalized["R"], normalized["G"], normalized["B"]))
+            rgb[~common_mask] = 0.0
+            rgb = np.nan_to_num(rgb, nan=0.0)
+        except Exception as exc:
+            LOG.warning("WCS reprojection for RGB failed (%s); fallback to shape-cropped RGB.", exc)
+            dr, dg, db = r_input["data"], g_input["data"], b_input["data"]
+            min_h = min(dr.shape[0], dg.shape[0], db.shape[0])
+            min_w = min(dr.shape[1], dg.shape[1], db.shape[1])
+            nr, _ = self.renderer.normalize(dr[:min_h, :min_w], stretch="asinh")
+            ng, _ = self.renderer.normalize(dg[:min_h, :min_w], stretch="asinh")
+            nb, _ = self.renderer.normalize(db[:min_h, :min_w], stretch="asinh")
+            rgb = np.stack([nr, ng, nb], axis=-1)
+
         import matplotlib.pyplot as plt
         buf = io.BytesIO()
         plt.imsave(buf, rgb, format="png")
         self.send_image(buf.getvalue())
 
     def handle_sed(self, query: dict[str, list[str]]) -> None:
-        """Hyperspectral Spectral Energy Distribution (SED) at target pixel."""
+        """Hyperspectral Spectral Energy Distribution (SED) on the fly at optional (x, y) coordinates."""
+        try:
+            norm_x = float(query.get("x", [0.5])[0])
+            norm_y = float(query.get("y", [0.5])[0])
+        except (ValueError, TypeError):
+            norm_x, norm_y = 0.5, 0.5
+
         files = list(self.paths.raw.glob("**/*.fits"))
         points = []
         for f in files:
@@ -653,14 +734,14 @@ class SpherexApiHandler(BaseHTTPRequestHandler):
                 hdr = hdul["IMAGE"].header if "IMAGE" in hdul else hdul[0].header
                 d = hdul["IMAGE"].data if "IMAGE" in hdul else hdul[0].data
                 det = hdr.get("DETECTOR", "1")
-                # Default approximate central wavelengths for SPHEREx arrays 1 through 6
                 det_wavel = {
                     "1": 0.92, "2": 1.35, "3": 2.00, "4": 3.10, "5": 4.10, "6": 4.70
                 }
                 wavel = float(hdr.get("WAVELMIN", det_wavel.get(str(det), 2.0)))
-                # Extract central pixel flux
-                cy, cx = d.shape[0] // 2, d.shape[1] // 2
-                flux = float(d[cy, cx]) if np.isfinite(d[cy, cx]) else 0.0
+                # Extract flux at user click or center pixel
+                py = max(0, min(d.shape[0] - 1, int(norm_y * d.shape[0])))
+                px = max(0, min(d.shape[1] - 1, int(norm_x * d.shape[1])))
+                flux = float(d[py, px]) if np.isfinite(d[py, px]) else 0.0
                 points.append({
                     "detector": str(det),
                     "wavelength_um": round(wavel, 2),
@@ -669,6 +750,46 @@ class SpherexApiHandler(BaseHTTPRequestHandler):
                 })
         points.sort(key=lambda x: x["wavelength_um"])
         self.send_json(points)
+
+    def handle_coadd(self, query: dict[str, list[str]]) -> None:
+        """Co-add (stack) all observations taken by a specific detector array (1-6) to improve signal-to-noise."""
+        target_det = query.get("detector", ["all"])[0]
+        stretch = query.get("stretch", ["asinh"])[0]
+        colormap = query.get("colormap", ["inferno"])[0]
+        files = list(self.paths.raw.glob("**/*.fits"))
+        if not files:
+            self.send_error(404, "No FITS files available for co-addition")
+            return
+
+        matching_arrays = []
+        for f in files:
+            with fits.open(f) as hdul:
+                hdr = hdul["IMAGE"].header if "IMAGE" in hdul else hdul[0].header
+                data = hdul["IMAGE"].data if "IMAGE" in hdul else hdul[0].data
+                det = str(hdr.get("DETECTOR", "3"))
+                if target_det == "all" or det == str(target_det):
+                    matching_arrays.append(np.asarray(data, dtype=float))
+
+        if not matching_arrays:
+            # Fallback to all files if selected array has no cutouts
+            matching_arrays = [fits.open(f)[0].data for f in files]
+
+        # Crop all frames to common minimum shape
+        min_h = min(a.shape[0] for a in matching_arrays)
+        min_w = min(a.shape[1] for a in matching_arrays)
+        cropped = [a[:min_h, :min_w] for a in matching_arrays]
+
+        # Stack via mean/median to reject outliers and boost SNR
+        stacked = np.nanmean(cropped, axis=0) if len(cropped) > 1 else cropped[0]
+        normalized, _ = self.renderer.normalize(stacked, stretch=stretch)
+
+        import matplotlib.pyplot as plt
+        cmap_name = colormap if colormap in plt.colormaps() else "inferno"
+        rgba = plt.get_cmap(cmap_name)(normalized)
+
+        buf = io.BytesIO()
+        plt.imsave(buf, rgba, format="png")
+        self.send_image(buf.getvalue())
 
     def handle_investigate(self, query: dict[str, list[str]]) -> None:
         """Measure candidate motion from click coordinates across all aligned local frames."""

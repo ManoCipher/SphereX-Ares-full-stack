@@ -55,7 +55,7 @@ export function App() {
   const [spectrumSourceCoord, setSpectrumSourceCoord] = useState<{ x: number; y: number } | null>(null);
   const [sedData, setSedData] = useState<SedPoint[]>([]);
 
-  // 1. Initial Load: Fetch targets metadata (presets)
+  // 1. Initial Load: Fetch targets metadata (presets) and parse URL query parameters
   useEffect(() => {
     fetchJson<Target[]>('/api/targets')
       .then((data: Target[]) => {
@@ -65,6 +65,29 @@ export function App() {
         }
       })
       .catch(() => setBackendConnected(false));
+
+    // Parse URL coordinates (e.g., ?ra=133.785&dec=-7.244&fov=0.08) for deep-linking and embedding
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const urlRa = params.get('ra');
+      const urlDec = params.get('dec');
+      const urlRadius = params.get('radius') || params.get('fov');
+      const urlTarget = params.get('target');
+      const urlMode = params.get('mode');
+
+      if (urlTarget) {
+        setSelectedTargetId(urlTarget);
+      }
+      if (urlRa && urlDec) {
+        setRa(urlRa);
+        setDec(urlDec);
+        if (urlRadius) setRadius(urlRadius);
+        if (urlMode === 'spectral') setActiveDomain('spectral');
+        setStatusMessage(`Loaded coordinates from URL (RA: ${urlRa}°, Dec: ${urlDec}°). Click Fetch FITS or Auto Select.`);
+      }
+    } catch {
+      // Ignore URL parsing errors
+    }
   }, []);
 
   // 2. Fetch Spectral SED data when switching to Spectral mode

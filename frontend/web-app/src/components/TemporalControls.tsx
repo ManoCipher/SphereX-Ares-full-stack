@@ -23,6 +23,12 @@ interface TemporalControlsProps {
   onChangeColormap: (v: string) => void;
   selectedDetector: string;
   onChangeDetector: (v: string) => void;
+  cleanEnabled: boolean;
+  onToggleClean: () => void;
+  isDifferenceMode: boolean;
+  onToggleDifferenceMode: () => void;
+  invert: boolean;
+  onToggleInvert: () => void;
 }
 
 export const TemporalControls: React.FC<TemporalControlsProps> = ({
@@ -48,6 +54,12 @@ export const TemporalControls: React.FC<TemporalControlsProps> = ({
   onChangeColormap,
   selectedDetector,
   onChangeDetector,
+  cleanEnabled,
+  onToggleClean,
+  isDifferenceMode,
+  onToggleDifferenceMode,
+  invert,
+  onToggleInvert,
 }) => {
   return (
     <div style={{
@@ -61,13 +73,14 @@ export const TemporalControls: React.FC<TemporalControlsProps> = ({
       fontSize: '12px',
       fontFamily: 'monospace',
     }}>
-      {/* Primary Mode Banner: Static View vs Blink Mode */}
+      {/* Primary Mode Banner: Static View vs Blink Mode vs Difference Mode */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
           <button
             onClick={onToggleBlink}
+            title="Toggle automatic temporal blinking between aligned observation epochs"
             style={{
-              padding: '6px 14px',
+              padding: '6px 12px',
               backgroundColor: isBlinkActive ? '#38bdf8' : '#1e293b',
               color: isBlinkActive ? '#000' : '#cbd5e1',
               fontWeight: 'bold',
@@ -76,7 +89,55 @@ export const TemporalControls: React.FC<TemporalControlsProps> = ({
               cursor: 'pointer',
             }}
           >
-            {isBlinkActive ? '⏱ Blink Comparator: Active' : '▶ Enable Blink Mode'}
+            {isBlinkActive ? 'Blink Active' : 'Blink Mode'}
+          </button>
+
+          <button
+            onClick={onToggleDifferenceMode}
+            title="Toggle WCS-aligned difference imaging (Epoch B minus Epoch A) to isolate moving objects and variable sources"
+            style={{
+              padding: '6px 12px',
+              backgroundColor: isDifferenceMode ? '#f59e0b' : '#1e293b',
+              color: isDifferenceMode ? '#000' : '#cbd5e1',
+              fontWeight: 'bold',
+              borderRadius: '4px',
+              border: 'none',
+              cursor: 'pointer',
+            }}
+          >
+            {isDifferenceMode ? 'Difference ON' : 'Difference'}
+          </button>
+
+          <button
+            onClick={onToggleClean}
+            title="Apply SPHEREx bitmask FLAGS and VARIANCE cleaning to mask bad pixels and detector artifacts"
+            style={{
+              padding: '6px 12px',
+              backgroundColor: cleanEnabled ? '#10b981' : '#1e293b',
+              color: cleanEnabled ? '#000' : '#cbd5e1',
+              fontWeight: 'bold',
+              borderRadius: '4px',
+              border: 'none',
+              cursor: 'pointer',
+            }}
+          >
+            {cleanEnabled ? 'Clean ON' : 'Clean'}
+          </button>
+
+          <button
+            onClick={onToggleInvert}
+            title="Invert colormap polarity (renders dark sources against bright background)"
+            style={{
+              padding: '6px 12px',
+              backgroundColor: invert ? '#a855f7' : '#1e293b',
+              color: invert ? '#000' : '#cbd5e1',
+              fontWeight: 'bold',
+              borderRadius: '4px',
+              border: 'none',
+              cursor: 'pointer',
+            }}
+          >
+            {invert ? 'Invert ON' : 'Invert'}
           </button>
 
           <span style={{ color: '#94a3b8' }}>
@@ -88,6 +149,7 @@ export const TemporalControls: React.FC<TemporalControlsProps> = ({
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <button
               onClick={onTogglePlay}
+              title="Play or pause the continuous epoch blinking animation"
               style={{
                 padding: '5px 12px',
                 backgroundColor: isPlaying ? '#e11d48' : '#059669',
@@ -98,16 +160,29 @@ export const TemporalControls: React.FC<TemporalControlsProps> = ({
                 cursor: 'pointer',
               }}
             >
-              {isPlaying ? '⏸ Pause' : '▶ Play'}
+              {isPlaying ? 'Pause' : 'Play'}
             </button>
-            <button onClick={onPrev} style={{ padding: '5px 8px', backgroundColor: '#1e293b', color: '#fff', border: '1px solid #334155', borderRadius: '4px', cursor: 'pointer' }}>⏮</button>
-            <button onClick={onNext} style={{ padding: '5px 8px', backgroundColor: '#1e293b', color: '#fff', border: '1px solid #334155', borderRadius: '4px', cursor: 'pointer' }}>⏭</button>
-            <span style={{ color: '#64748b' }}>Speed:</span>
+            <button
+              onClick={onPrev}
+              title="Step backwards to previous epoch"
+              style={{ padding: '5px 10px', backgroundColor: '#1e293b', color: '#fff', border: '1px solid #334155', borderRadius: '4px', cursor: 'pointer' }}
+            >
+              Prev
+            </button>
+            <button
+              onClick={onNext}
+              title="Step forward to next epoch"
+              style={{ padding: '5px 10px', backgroundColor: '#1e293b', color: '#fff', border: '1px solid #334155', borderRadius: '4px', cursor: 'pointer' }}
+            >
+              Next
+            </button>
+            <span style={{ color: '#64748b' }} title="Frames per second playback rate">Speed:</span>
             <input
               type="range"
               min="1"
               max="5"
               value={fps}
+              title={`Blink animation speed: ${fps} frames per second`}
               onChange={(e) => onChangeFps(parseInt(e.target.value))}
               style={{ width: '60px', accentColor: '#38bdf8' }}
             />
@@ -128,6 +203,7 @@ export const TemporalControls: React.FC<TemporalControlsProps> = ({
           max={Math.max(0, totalEpochs - 1)}
           value={epochIdx}
           disabled={totalEpochs <= 1}
+          title="Drag slider to scrub between available observation epochs"
           onChange={(e) => onScrub(parseInt(e.target.value))}
           style={{ width: '100%', accentColor: '#38bdf8' }}
         />
@@ -149,11 +225,13 @@ export const TemporalControls: React.FC<TemporalControlsProps> = ({
           <label style={{ display: 'block', color: '#94a3b8', fontSize: '10px', marginBottom: '4px' }}>Render Mode / Palette</label>
           <select
             value={colormap}
+            title="Select False-Color composite or standard astronomical colormaps"
             onChange={(e) => onChangeColormap(e.target.value)}
             style={{ width: '100%', padding: '5px 6px', backgroundColor: '#0c1322', border: '1px solid #1e293b', color: '#fff', borderRadius: '4px' }}
           >
             <option value="rgb">Visible RGB Composite (Default)</option>
             <option value="gray">Greyscale (Raw Instrument)</option>
+            <option value="coolwarm">Coolwarm (Difference Bipolar)</option>
             <option value="inferno">Inferno</option>
             <option value="viridis">Viridis</option>
             <option value="magma">Magma</option>
@@ -166,6 +244,7 @@ export const TemporalControls: React.FC<TemporalControlsProps> = ({
           <label style={{ display: 'block', color: '#94a3b8', fontSize: '10px', marginBottom: '4px' }}>Stretch Algorithm</label>
           <select
             value={stretch}
+            title="Select mathematical pixel stretching algorithm"
             onChange={(e) => onChangeStretch(e.target.value)}
             style={{ width: '100%', padding: '5px 6px', backgroundColor: '#0c1322', border: '1px solid #1e293b', color: '#fff', borderRadius: '4px' }}
           >
@@ -186,6 +265,7 @@ export const TemporalControls: React.FC<TemporalControlsProps> = ({
             min="0"
             max="40"
             value={minCutPercent}
+            title={`Lower intensity percentile clip: ${minCutPercent}%`}
             onChange={(e) => onChangeMinCutPercent(parseFloat(e.target.value))}
             style={{ width: '100%', accentColor: '#38bdf8' }}
           />
@@ -202,6 +282,7 @@ export const TemporalControls: React.FC<TemporalControlsProps> = ({
             min="60"
             max="100"
             value={maxCutPercent}
+            title={`Upper intensity percentile clip: ${maxCutPercent}%`}
             onChange={(e) => onChangeMaxCutPercent(parseFloat(e.target.value))}
             style={{ width: '100%', accentColor: '#38bdf8' }}
           />
@@ -212,6 +293,7 @@ export const TemporalControls: React.FC<TemporalControlsProps> = ({
           <label style={{ display: 'block', color: '#94a3b8', fontSize: '10px', marginBottom: '4px' }}>Detector Filter</label>
           <select
             value={selectedDetector}
+            title="Filter displayed exposures to a single focal plane detector array"
             onChange={(e) => onChangeDetector(e.target.value)}
             style={{ width: '100%', padding: '5px 6px', backgroundColor: '#0c1322', border: '1px solid #1e293b', color: '#fff', borderRadius: '4px' }}
           >

@@ -4,8 +4,17 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 from pathlib import Path
+
+os.environ.setdefault("MPLCONFIGDIR", str(Path(os.environ.get("TEMP", "/tmp")) / "matplotlib_spherex"))
+
+if __name__ == "__main__" and not __package__:
+    src_dir = str(Path(__file__).resolve().parents[1])
+    if src_dir not in sys.path:
+        sys.path.insert(0, src_dir)
+    __package__ = "spherex"
 
 import pandas as pd
 from astropy.time import Time

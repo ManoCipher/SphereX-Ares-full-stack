@@ -19,6 +19,9 @@ interface TargetSelectorProps {
   onChangeEndDate: (v: string) => void;
   onQuery: () => void;
   isQuerying: boolean;
+  onSmartSelect: () => void;
+  isSmartSelecting: boolean;
+  smartExplanation?: string;
 }
 
 export const TargetSelector: React.FC<TargetSelectorProps> = ({
@@ -39,6 +42,9 @@ export const TargetSelector: React.FC<TargetSelectorProps> = ({
   onChangeEndDate,
   onQuery,
   isQuerying,
+  onSmartSelect,
+  isSmartSelecting,
+  smartExplanation,
 }) => {
   return (
     <div style={{
@@ -63,6 +69,7 @@ export const TargetSelector: React.FC<TargetSelectorProps> = ({
               <button
                 key={t.id}
                 onClick={() => onSelectTarget(t)}
+                title={`Target: ${t.name} (RA: ${t.ra_deg.toFixed(3)}°, Dec: ${t.dec_deg.toFixed(3)}°)`}
                 style={{
                   padding: '3px 8px',
                   borderRadius: '4px',
@@ -93,6 +100,7 @@ export const TargetSelector: React.FC<TargetSelectorProps> = ({
           <input
             type="text"
             value={ra}
+            title="Right Ascension in decimal degrees (J2000)"
             onChange={(e) => onChangeRa(e.target.value)}
             placeholder="e.g. 133.785"
             style={{ width: '100%', boxSizing: 'border-box', padding: '6px 8px', backgroundColor: '#070b14', border: '1px solid #1e293b', color: '#fff', borderRadius: '4px', fontFamily: 'monospace' }}
@@ -104,6 +112,7 @@ export const TargetSelector: React.FC<TargetSelectorProps> = ({
           <input
             type="text"
             value={dec}
+            title="Declination in decimal degrees (J2000)"
             onChange={(e) => onChangeDec(e.target.value)}
             placeholder="e.g. -7.244"
             style={{ width: '100%', boxSizing: 'border-box', padding: '6px 8px', backgroundColor: '#070b14', border: '1px solid #1e293b', color: '#fff', borderRadius: '4px', fontFamily: 'monospace' }}
@@ -115,6 +124,7 @@ export const TargetSelector: React.FC<TargetSelectorProps> = ({
           <input
             type="text"
             value={radius}
+            title="Cone search search radius in decimal degrees (default 0.05° to 0.08°)"
             onChange={(e) => onChangeRadius(e.target.value)}
             placeholder="e.g. 0.05"
             style={{ width: '100%', boxSizing: 'border-box', padding: '6px 8px', backgroundColor: '#070b14', border: '1px solid #1e293b', color: '#fff', borderRadius: '4px', fontFamily: 'monospace' }}
@@ -122,12 +132,13 @@ export const TargetSelector: React.FC<TargetSelectorProps> = ({
         </div>
 
         <div>
-          <label style={{ display: 'block', color: '#94a3b8', fontSize: '10px', marginBottom: '3px' }}>No. of Pictures</label>
+          <label style={{ display: 'block', color: '#94a3b8', fontSize: '10px', marginBottom: '3px' }}>Exposures</label>
           <input
             type="number"
             min="2"
             max="12"
             value={maxResults}
+            title="Maximum number of observation cutouts to fetch (2 to 12)"
             onChange={(e) => onChangeMaxResults(e.target.value)}
             placeholder="e.g. 6"
             style={{ width: '100%', boxSizing: 'border-box', padding: '6px 8px', backgroundColor: '#070b14', border: '1px solid #1e293b', color: '#fff', borderRadius: '4px', fontFamily: 'monospace' }}
@@ -139,6 +150,7 @@ export const TargetSelector: React.FC<TargetSelectorProps> = ({
           <input
             type="text"
             value={startDate}
+            title="Optional ISO observation start date filter (YYYY-MM-DD)"
             onChange={(e) => onChangeStartDate(e.target.value)}
             placeholder="YYYY-MM-DD"
             style={{ width: '100%', boxSizing: 'border-box', padding: '6px 8px', backgroundColor: '#070b14', border: '1px solid #1e293b', color: '#fff', borderRadius: '4px', fontFamily: 'monospace' }}
@@ -150,32 +162,72 @@ export const TargetSelector: React.FC<TargetSelectorProps> = ({
           <input
             type="text"
             value={endDate}
+            title="Optional ISO observation end date filter (YYYY-MM-DD)"
             onChange={(e) => onChangeEndDate(e.target.value)}
             placeholder="YYYY-MM-DD"
             style={{ width: '100%', boxSizing: 'border-box', padding: '6px 8px', backgroundColor: '#070b14', border: '1px solid #1e293b', color: '#fff', borderRadius: '4px', fontFamily: 'monospace' }}
           />
         </div>
 
-        <div>
+        <div style={{ display: 'flex', gap: '6px' }}>
           <button
             onClick={onQuery}
-            disabled={isQuerying}
+            disabled={isQuerying || isSmartSelecting}
+            title="Query NASA IRSA SIA2 and fetch FITS cutouts for the specified coordinates"
             style={{
-              width: '100%',
-              padding: '7px 14px',
+              flex: 1,
+              padding: '7px 10px',
               backgroundColor: '#0284c7',
               color: '#fff',
               fontWeight: 'bold',
               borderRadius: '4px',
               border: 'none',
-              cursor: isQuerying ? 'not-allowed' : 'pointer',
-              opacity: isQuerying ? 0.6 : 1,
+              cursor: (isQuerying || isSmartSelecting) ? 'not-allowed' : 'pointer',
+              opacity: (isQuerying || isSmartSelecting) ? 0.6 : 1,
             }}
           >
-            {isQuerying ? 'Fetching...' : '🔍 Fetch SPHEREx FITS'}
+            {isQuerying ? 'Fetching...' : 'Fetch FITS'}
+          </button>
+
+          <button
+            onClick={onSmartSelect}
+            disabled={isQuerying || isSmartSelecting}
+            title="Automatically select scientifically optimal epochs or spectral bands using backend ObservationSelectionService"
+            style={{
+              flex: 1,
+              padding: '7px 10px',
+              backgroundColor: '#0d9488',
+              color: '#fff',
+              fontWeight: 'bold',
+              borderRadius: '4px',
+              border: 'none',
+              cursor: (isQuerying || isSmartSelecting) ? 'not-allowed' : 'pointer',
+              opacity: (isQuerying || isSmartSelecting) ? 0.6 : 1,
+            }}
+          >
+            {isSmartSelecting ? 'Selecting...' : 'Auto Select'}
           </button>
         </div>
       </div>
+
+      {/* Scientific Selection Rationale Banner */}
+      {smartExplanation && (
+        <div style={{
+          padding: '8px 12px',
+          backgroundColor: '#0f172a',
+          border: '1px solid #0d9488',
+          borderRadius: '4px',
+          color: '#5eead4',
+          fontSize: '11px',
+          fontFamily: 'monospace',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: '8px',
+        }}>
+          <span><strong>Selection Rationale:</strong> {smartExplanation}</span>
+        </div>
+      )}
     </div>
   );
 };

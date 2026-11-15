@@ -28,3 +28,10 @@ export interface SedPoint {
   flux: number;
   filename: string;
 }
+
+export interface SmartSelectResult {
+  mode: string;
+  explanation: string;
+  count: number;
+  selected: any[];
+}

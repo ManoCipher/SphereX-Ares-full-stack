@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import type { Target, FitsRecord, SedPoint } from './types';
+import type { Target, FitsRecord, SedPoint, SmartSelectResult } from './types';
 import { BlinkCanvas } from './components/BlinkCanvas';
 import { TargetSelector } from './components/TargetSelector';
 import { TemporalControls } from './components/TemporalControls';
@@ -15,6 +15,8 @@ export function App() {
   const [fetchedExposures, setFetchedExposures] = useState<FitsRecord[]>([]);
   const [backendConnected, setBackendConnected] = useState<boolean>(false);
   const [isQuerying, setIsQuerying] = useState<boolean>(false);
+  const [isSmartSelecting, setIsSmartSelecting] = useState<boolean>(false);
+  const [smartExplanation, setSmartExplanation] = useState<string>('');
 
   // User input coordinates (Free text/numerical entry)
   const [ra, setRa] = useState<string>('133.785');
@@ -31,12 +33,15 @@ export function App() {
   const [isPlaying, setIsPlaying] = useState<boolean>(false); // OFF by default
   const [fps, setFps] = useState<number>(2);
 
-  // Raw Image Calibration Controls (Default: Visible RGB composite)
+  // Raw Image Calibration & Processing Controls
   const [stretch, setStretch] = useState<string>('linear');
   const [colormap, setColormap] = useState<string>('rgb'); // Visible RGB Composite by default
   const [minCutPercent, setMinCutPercent] = useState<number>(2); // Slider: 2%
   const [maxCutPercent, setMaxCutPercent] = useState<number>(98); // Slider: 98%
   const [selectedDetector, setSelectedDetector] = useState<string>('all');
+  const [cleanImage, setCleanImage] = useState<boolean>(false);
+  const [isDifferenceMode, setIsDifferenceMode] = useState<boolean>(false);
+  const [invert, setInvert] = useState<boolean>(false);
 
   // Candidate Investigation State
   const [investigationMarker, setInvestigationMarker] = useState<{ x: number; y: number } | null>(null);
@@ -84,6 +89,7 @@ export function App() {
   // 3. User Query Action: Perform search and ingest fresh cutouts
   const handlePerformQuery = () => {
     setIsQuerying(true);
+    setSmartExplanation('');
     setInvestigationMarker(null);
     setCandidateReport(null);
 
@@ -112,6 +118,35 @@ export function App() {
       .catch(() => setIsQuerying(false));
   };
 
+  // 4. Smart Observation Selection Handler
+  const handleSmartSelect = () => {
+    setIsSmartSelecting(true);
+    setSmartExplanation('');
+    setInvestigationMarker(null);
+    setCandidateReport(null);
+
+    const mode = activeDomain === 'spectral' ? 'spectral' : 'time';
+    fetch(`${API_BASE}/api/smart_select?ra=${ra}&dec=${dec}&radius=${radius}&mode=${mode}`)
+      .then((res) => res.json())
+      .then((data: SmartSelectResult) => {
+        if (data?.explanation) {
+          setSmartExplanation(data.explanation);
+        }
+        return fetch(`${API_BASE}/api/fetch_cutouts?ra=${ra}&dec=${dec}&radius=${radius}&max_files=${maxResults}&smart=1&mode=${mode}`);
+      })
+      .then((res) => res.json())
+      .then(() => fetch(`${API_BASE}/api/local_fits?ra=${ra}&dec=${dec}`))
+      .then((res) => res.json())
+      .then((files: FitsRecord[]) => {
+        if (Array.isArray(files) && files.length > 0) {
+          setFetchedExposures(files);
+          setEpochIdx(0);
+        }
+        setIsSmartSelecting(false);
+      })
+      .catch(() => setIsSmartSelecting(false));
+  };
+
   // Explicit user selection of benchmark targets
   const handleSelectTarget = (t: Target) => {
     setSelectedTargetId(t.id);
@@ -120,9 +155,10 @@ export function App() {
     setEpochIdx(0);
     setInvestigationMarker(null);
     setCandidateReport(null);
+    setSmartExplanation('');
   };
 
-  // 4. Candidate Click Investigation Handler
+  // 5. Candidate Click Investigation Handler
   const handleCanvasClick = (normX: number, normY: number) => {
     setInvestigationMarker({ x: normX, y: normY });
     setIsInvestigating(true);
@@ -154,11 +190,16 @@ export function App() {
   // Active cutout file strictly bounded to query results
   const activeFitsFile = filteredExposures[epochIdx]?.filename || fetchedExposures[0]?.filename || '';
 
-  // Streaming URL: Visible RGB composite by default, or single-band with chosen stretch/cuts
-  const imageSrc =
-    colormap === 'rgb'
-      ? `${API_BASE}/api/rgb`
-      : `${API_BASE}/api/render?filename=${encodeURIComponent(activeFitsFile)}&colormap=${colormap}&stretch=${stretch}&min_cut_percent=${minCutPercent}&max_cut_percent=${maxCutPercent}&clean=0`;
+  // Streaming Image URL: Difference mode, False-Color RGB composite, or single-band with stretch/cuts/cleaning
+  let imageSrc: string;
+  if (isDifferenceMode) {
+    const diffLast = totalEpochs > 1 ? (epochIdx > 0 ? epochIdx : totalEpochs - 1) : 1;
+    imageSrc = `${API_BASE}/api/difference?first=0&last=${diffLast}&colormap=${colormap === 'rgb' ? 'coolwarm' : colormap}&clean=${cleanImage ? '1' : '0'}&invert=${invert ? '1' : '0'}`;
+  } else if (colormap === 'rgb') {
+    imageSrc = `${API_BASE}/api/rgb`;
+  } else {
+    imageSrc = `${API_BASE}/api/render?filename=${encodeURIComponent(activeFitsFile)}&colormap=${colormap}&stretch=${stretch}&min_cut_percent=${minCutPercent}&max_cut_percent=${maxCutPercent}&clean=${cleanImage ? '1' : '0'}&invert=${invert ? '1' : '0'}`;
+  }
 
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#070b14', color: '#f1f5f9', display: 'flex', flexDirection: 'column' }}>
@@ -223,6 +264,9 @@ export function App() {
           onChangeEndDate={setEndDate}
           onQuery={handlePerformQuery}
           isQuerying={isQuerying}
+          onSmartSelect={handleSmartSelect}
+          isSmartSelecting={isSmartSelecting}
+          smartExplanation={smartExplanation}
         />
 
         {/* Queried Image Gallery Strip */}
@@ -250,6 +294,7 @@ export function App() {
             <div style={{ display: 'inline-flex', backgroundColor: '#0c1322', border: '1px solid #1e293b', borderRadius: '6px', padding: '2px' }}>
               <button
                 onClick={() => { setActiveDomain('temporal'); setRgbMode(false); }}
+                title="Single exposure inspection and multi-epoch temporal astrometry"
                 style={{
                   padding: '5px 12px',
                   borderRadius: '4px',
@@ -262,10 +307,11 @@ export function App() {
                   color: activeDomain === 'temporal' ? '#000' : '#94a3b8',
                 }}
               >
-                ⏱ Single Exposure / Temporal Astrometry
+                Temporal Astrometry
               </button>
               <button
                 onClick={() => { setActiveDomain('spectral'); setIsPlaying(false); setIsBlinkActive(false); }}
+                title="102-channel hyperspectral slicing and spectral energy distribution (SED)"
                 style={{
                   padding: '5px 12px',
                   borderRadius: '4px',
@@ -278,7 +324,7 @@ export function App() {
                   color: activeDomain === 'spectral' ? '#fff' : '#94a3b8',
                 }}
               >
-                🌈 Hyperspectral Slice (102 Bands)
+                Hyperspectral Slicing
               </button>
             </div>
           </div>
@@ -330,6 +376,15 @@ export function App() {
                 onChangeColormap={setColormap}
                 selectedDetector={selectedDetector}
                 onChangeDetector={(d) => { setSelectedDetector(d); setEpochIdx(0); }}
+                cleanEnabled={cleanImage}
+                onToggleClean={() => setCleanImage((prev) => !prev)}
+                isDifferenceMode={isDifferenceMode}
+                onToggleDifferenceMode={() => {
+                  setIsDifferenceMode((prev) => !prev);
+                  if (isBlinkActive) setIsPlaying(false);
+                }}
+                invert={invert}
+                onToggleInvert={() => setInvert((prev) => !prev)}
               />
             ) : (
               <SpectralControls

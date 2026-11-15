@@ -26,10 +26,11 @@ export const SpectralControls: React.FC<SpectralControlsProps> = ({
       fontSize: '12px',
       fontFamily: 'monospace',
     }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <span style={{ color: '#c084fc', fontWeight: 'bold' }}>🌈 102-Channel Hyperspectral Diagnostics</span>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px' }}>
+        <span style={{ color: '#c084fc', fontWeight: 'bold' }}>102-Channel Hyperspectral Diagnostics</span>
         <button
           onClick={onToggleRgb}
+          title="Compose multi-band false color image from blue, green, and red SPHEREx detector channels"
           style={{
             padding: '6px 12px',
             backgroundColor: rgbMode ? '#10b981' : '#334155',
@@ -40,7 +41,7 @@ export const SpectralControls: React.FC<SpectralControlsProps> = ({
             cursor: 'pointer',
           }}
         >
-          {rgbMode ? 'RGB Composite: ACTIVE' : 'Toggle 3-Band RGB'}
+          {rgbMode ? 'RGB Active' : 'RGB Composite'}
         </button>
       </div>
 

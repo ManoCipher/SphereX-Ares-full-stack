@@ -84,13 +84,14 @@ export const CandidateModal: React.FC<CandidateModalProps> = ({
           backgroundColor: '#0c1322',
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <span style={{ fontSize: '14px' }}>🎯</span>
+            <span style={{ display: 'inline-block', width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#06b6d4' }}></span>
             <strong style={{ fontSize: '13px', color: '#fff', fontFamily: 'monospace' }}>
               Candidate Astrometry Investigation
             </strong>
           </div>
           <button
             onClick={onClose}
+            title="Close modal"
             style={{
               background: 'none',
               border: 'none',
@@ -219,6 +220,7 @@ export const CandidateModal: React.FC<CandidateModalProps> = ({
           {report?.text_report && (
             <button
               onClick={handleDownload}
+              title="Export candidate astrometric investigation report to a text file"
               style={{
                 padding: '6px 12px',
                 backgroundColor: '#1e293b',
@@ -230,11 +232,12 @@ export const CandidateModal: React.FC<CandidateModalProps> = ({
                 cursor: 'pointer',
               }}
             >
-              💾 Save Report...
+              Save Report
             </button>
           )}
           <button
             onClick={onClose}
+            title="Close modal"
             style={{
               padding: '6px 14px',
               backgroundColor: '#06b6d4',

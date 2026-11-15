@@ -188,14 +188,35 @@ class SpherexApiHandler(BaseHTTPRequestHandler):
         })
 
     def handle_smart_select(self, query: dict[str, list[str]]) -> None:
-        """Select best 2-6 observations using backend ObservationSelectionService."""
+        """Select best 2-6 observations using backend ObservationSelectionService with offline fallback."""
         ra = float(query.get("ra", ["133.785"])[0])
         dec = float(query.get("dec", ["-7.244"])[0])
         radius = float(query.get("radius", ["0.05"])[0])
         mode_str = query.get("mode", ["time"])[0].lower()
         mode = SelectionMode.SPECTRAL if mode_str == "spectral" else SelectionMode.TIME
 
-        observations = self.client.search(ra=ra, dec=dec, radius=radius, max_results=50)
+        try:
+            observations = self.client.search(ra=ra, dec=dec, radius=radius, max_results=50)
+        except Exception as exc:
+            LOG.warning("IRSA live search unreachable in smart_select (%s). Using local records.", exc)
+            files = list(self.paths.raw.glob("**/*.fits"))
+            observations = []
+            for f in files:
+                with fits.open(f) as hdul:
+                    hdr = hdul["IMAGE"].header if "IMAGE" in hdul else hdul[0].header
+                    observations.append({
+                        "observation_id": hdr.get("OBS_ID", f.stem),
+                        "detector": str(hdr.get("DETECTOR", "3")),
+                        "band": hdr.get("BAND", "SPHEREx"),
+                        "observation_timestamp": hdr.get("DATE-OBS", "2025-05-01T00:00:00"),
+                        "mjd": float(hdr.get("MJD-OBS", 60800.0)),
+                        "wavelength_min_um": float(hdr.get("WAVELMIN", 2.0)),
+                        "wavelength_max_um": float(hdr.get("WAVELMAX", 2.5)),
+                        "ra": ra,
+                        "dec": dec,
+                        "fits_url": f.name,
+                    })
+
         if not observations:
             self.send_json({"selected": [], "explanation": "No observations found at this location."})
             return
@@ -215,6 +236,9 @@ class SpherexApiHandler(BaseHTTPRequestHandler):
         radius = float(query.get("radius", ["0.05"])[0])
         # Allow user to specify how many files to fetch (up to 12)
         max_files = min(int(query.get("max_files", ["6"])[0]), 12)
+        smart_enabled = query.get("smart", ["0"])[0].lower() in {"1", "true"}
+        mode_str = query.get("mode", ["time"])[0].lower()
+        mode = SelectionMode.SPECTRAL if mode_str == "spectral" else SelectionMode.TIME
 
         try:
             # 1. Discover observations at user coordinates (fast DR1 targeted search)
@@ -252,9 +276,18 @@ class SpherexApiHandler(BaseHTTPRequestHandler):
             })
             return
 
-        # 2. Prioritize chronological epochs of a single detector (Array 6 or 3) for clean blinking
-        det_preferred = [o for o in observations if str(o.get("detector")) in {"6", "3"}]
-        selected_obs = det_preferred[:max_files] if len(det_preferred) >= 2 else observations[:max_files]
+        # 2. Selection: Smart selection if requested, else prioritize chronological single detector
+        if smart_enabled and observations:
+            try:
+                smart_res = self.selector.select(observations, ra=ra, dec=dec, mode=mode)
+                selected_obs = list(smart_res.observations)[:max_files] if smart_res.observations else observations[:max_files]
+            except Exception as exc:
+                LOG.warning("Smart selection in fetch_cutouts failed (%s). Falling back.", exc)
+                det_preferred = [o for o in observations if str(o.get("detector")) in {"6", "3"}]
+                selected_obs = det_preferred[:max_files] if len(det_preferred) >= 2 else observations[:max_files]
+        else:
+            det_preferred = [o for o in observations if str(o.get("detector")) in {"6", "3"}]
+            selected_obs = det_preferred[:max_files] if len(det_preferred) >= 2 else observations[:max_files]
 
         # 3. Download missing FITS cutouts from IRSA IBE
         try:
@@ -433,28 +466,70 @@ class SpherexApiHandler(BaseHTTPRequestHandler):
         self.send_image(buf.getvalue())
 
     def handle_difference(self, query: dict[str, list[str]]) -> None:
-        """Calculate real mathematical difference (FITS B - FITS A) using difference_image()."""
-        files = list(self.paths.raw.glob("**/*.fits"))
+        """Calculate real mathematical difference (Epoch B - Epoch A) on a shared WCS sky grid."""
+        files = sorted(list(self.paths.raw.glob("**/*.fits")), key=lambda p: p.stat().st_mtime)
         if len(files) < 2:
             self.send_error(400, "Need at least 2 FITS files to compute a difference image")
             return
 
-        with fits.open(files[0]) as h1, fits.open(files[1]) as h2:
-            d1 = h1["IMAGE"].data if "IMAGE" in h1 else h1[0].data
-            d2 = h2["IMAGE"].data if "IMAGE" in h2 else h2[0].data
+        first_idx = int(query.get("first", ["0"])[0])
+        last_idx = int(query.get("last", ["-1"])[0])
+        first_idx = max(0, min(first_idx, len(files) - 1))
+        last_idx = max(0, min(last_idx, len(files) - 1))
+        if first_idx == last_idx:
+            last_idx = (first_idx + 1) % len(files)
 
-        aligned_dummy = {"frames": [d1, d2]}
-        diff = difference_image(aligned_dummy, first=0, last=1)
+        clean_enabled = query.get("clean", ["0"])[0].lower() in {"1", "true"}
+        invert = query.get("invert", ["false"])[0].lower() in {"true", "1"}
 
-        # Rescale difference to 0-1 range centered on 0.5
-        min_v, max_v = float(np.min(diff)), float(np.max(diff))
-        span = max(abs(min_v), abs(max_v)) or 1.0
-        normalized = np.clip((diff / (2.0 * span)) + 0.5, 0.0, 1.0)
+        from astropy.wcs import WCS
+        raw_frames = []
+        for f in (files[first_idx], files[last_idx]):
+            with fits.open(f) as hdul:
+                hdr = hdul["IMAGE"].header if "IMAGE" in hdul else hdul[0].header
+                data = hdul["IMAGE"].data if "IMAGE" in hdul else hdul[0].data
+                if clean_enabled:
+                    cleaner = SpherexImageCleaner()
+                    flags = hdul["FLAGS"].data if "FLAGS" in hdul else None
+                    variance = hdul["VARIANCE"].data if "VARIANCE" in hdul else None
+                    clean_res = cleaner.clean(data, flags=flags, variance=variance)
+                    data = clean_res.get("cleaned_image", data)
+                wcs = WCS(hdr)
+                raw_frames.append({
+                    "data": np.asarray(data, dtype=float),
+                    "wcs": wcs,
+                    "observation_id": hdr.get("OBS_ID", f.stem),
+                    "observation_timestamp": hdr.get("DATE-OBS", ""),
+                })
+
+        try:
+            aligned_result = align_frames(raw_frames)
+            diff = difference_image(aligned_result, first=0, last=1)
+        except Exception as exc:
+            LOG.warning("WCS reprojection during differencing failed (%s); fallback to raw shape-matched subtraction.", exc)
+            d0, d1 = raw_frames[0]["data"], raw_frames[1]["data"]
+            min_h, min_w = min(d0.shape[0], d1.shape[0]), min(d0.shape[1], d1.shape[1])
+            diff = d1[:min_h, :min_w] - d0[:min_h, :min_w]
+
+        # Rescale difference to 0..1 range centered symmetrically around median at 0.5
+        finite = diff[np.isfinite(diff)]
+        if finite.size > 0:
+            med = float(np.median(finite))
+            p99 = float(np.percentile(np.abs(finite - med), 99.0))
+            span = p99 if p99 > 0 else (float(np.max(np.abs(finite))) or 1.0)
+            normalized = np.clip(((diff - med) / (2.0 * span)) + 0.5, 0.0, 1.0)
+        else:
+            normalized = np.zeros_like(diff, dtype=float)
+
+        if invert:
+            normalized = 1.0 - normalized
 
         import matplotlib.pyplot as plt
-        colormap = query.get("colormap", ["gray"])[0]
-        cmap_name = colormap if colormap in plt.colormaps() else "gray"
-        rgba = plt.get_cmap(cmap_name)(normalized)
+        colormap = query.get("colormap", ["coolwarm"])[0]
+        # If the requested colormap is 'rgb', fallback to 'coolwarm' for difference visualization
+        if colormap == "rgb" or colormap not in plt.colormaps():
+            colormap = "coolwarm"
+        rgba = plt.get_cmap(colormap)(normalized)
 
         buf = io.BytesIO()
         plt.imsave(buf, rgba, format="png")

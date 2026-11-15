@@ -70,7 +70,8 @@ export function App() {
   // 2. Fetch Spectral SED data when switching to Spectral mode
   useEffect(() => {
     if (activeDomain === 'spectral' && fetchedExposures.length > 0) {
-      fetchJson<SedPoint[]>('/api/sed')
+      const fileParam = fetchedExposures.map((e) => encodeURIComponent(e.filename)).join(',');
+      fetchJson<SedPoint[]>(`/api/sed?files=${fileParam}`)
         .then((data: SedPoint[]) => {
           if (Array.isArray(data)) setSedData(data);
         })
@@ -197,7 +198,8 @@ export function App() {
     if (activeDomain === 'spectral') {
       // In spectral mode: extract on-the-fly spectrum at clicked pixel
       setSpectrumSourceCoord({ x: normX, y: normY });
-      fetchJson<SedPoint[]>(`/api/sed?x=${normX}&y=${normY}`)
+      const fileParam = fetchedExposures.map((e) => encodeURIComponent(e.filename)).join(',');
+      fetchJson<SedPoint[]>(`/api/sed?x=${normX}&y=${normY}&files=${fileParam}`)
         .then((data: SedPoint[]) => {
           if (Array.isArray(data)) setSedData(data);
         })
@@ -251,7 +253,8 @@ export function App() {
   if (filteredExposures.length > 0) {
     if (isDifferenceMode && activeDomain === 'temporal') {
       const diffLast = totalEpochs > 1 ? (epochIdx > 0 ? epochIdx : totalEpochs - 1) : 1;
-      imageSrc = apiUrl(`/api/difference?first=0&last=${diffLast}&colormap=${colormap === 'rgb' ? 'coolwarm' : colormap}&clean=${cleanImage ? '1' : '0'}&invert=${invert ? '1' : '0'}`);
+      const fileParam = filteredExposures.map((e) => encodeURIComponent(e.filename)).join(',');
+      imageSrc = apiUrl(`/api/difference?first=0&last=${diffLast}&colormap=${colormap === 'rgb' ? 'coolwarm' : colormap}&clean=${cleanImage ? '1' : '0'}&invert=${invert ? '1' : '0'}&files=${fileParam}`);
     } else if (activeDomain === 'spectral' && rgbMode) {
       const fileParam = fetchedExposures.map((e) => encodeURIComponent(e.filename)).join(',');
       imageSrc = apiUrl(`/api/rgb?files=${fileParam}`);

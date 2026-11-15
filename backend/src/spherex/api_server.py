@@ -199,24 +199,16 @@ class SpherexApiHandler(BaseHTTPRequestHandler):
                 max_results=max_results,
             )
         except Exception as exc:
-            LOG.warning("IRSA live search unreachable (%s). Falling back to local catalog.", exc)
-            # Graceful offline / network failure fallback: use local FITS records
-            files = list(self.paths.raw.glob("**/*.fits"))
-            observations = []
-            for f in files:
-                with fits.open(f) as hdul:
-                    hdr = hdul["IMAGE"].header if "IMAGE" in hdul else hdul[0].header
-                    observations.append({
-                        "observation_id": hdr.get("OBS_ID", f.stem),
-                        "detector": str(hdr.get("DETECTOR", "3")),
-                        "band": hdr.get("BAND", "SPHEREx"),
-                        "observation_timestamp": hdr.get("DATE-OBS", "2025-05-01T00:00:00"),
-                        "mjd": float(hdr.get("MJD-OBS", 60800.0)),
-                        "wavelength_min_um": float(hdr.get("WAVELMIN", 2.0)),
-                        "wavelength_max_um": float(hdr.get("WAVELMAX", 2.5)),
-                        "ra": ra,
-                        "dec": dec,
-                    })
+            LOG.error("IRSA live search failed for RA=%.4f, Dec=%.4f: %s", ra, dec, exc)
+            self.send_json({
+                "count": 0,
+                "ra": ra,
+                "dec": dec,
+                "radius_deg": radius,
+                "observations": [],
+                "error": f"IRSA live search error: {exc}",
+            }, status=502)
+            return
 
         self.send_json({
             "count": len(observations),
@@ -237,27 +229,17 @@ class SpherexApiHandler(BaseHTTPRequestHandler):
         try:
             observations = self.search_archive(ra=ra, dec=dec, radius=radius, max_results=50)
         except Exception as exc:
-            LOG.warning("IRSA live search unreachable in smart_select (%s). Using local records.", exc)
-            files = list(self.paths.raw.glob("**/*.fits"))
-            observations = []
-            for f in files:
-                with fits.open(f) as hdul:
-                    hdr = hdul["IMAGE"].header if "IMAGE" in hdul else hdul[0].header
-                    observations.append({
-                        "observation_id": hdr.get("OBS_ID", f.stem),
-                        "detector": str(hdr.get("DETECTOR", "3")),
-                        "band": hdr.get("BAND", "SPHEREx"),
-                        "observation_timestamp": hdr.get("DATE-OBS", "2025-05-01T00:00:00"),
-                        "mjd": float(hdr.get("MJD-OBS", 60800.0)),
-                        "wavelength_min_um": float(hdr.get("WAVELMIN", 2.0)),
-                        "wavelength_max_um": float(hdr.get("WAVELMAX", 2.5)),
-                        "ra": ra,
-                        "dec": dec,
-                        "fits_url": f.name,
-                    })
+            LOG.error("IRSA live search unreachable in smart_select (%s).", exc)
+            self.send_json({
+                "mode": mode.value,
+                "explanation": f"IRSA live archive search failed: {exc}",
+                "count": 0,
+                "selected": [],
+            }, status=502)
+            return
 
         if not observations:
-            self.send_json({"selected": [], "explanation": "No observations found at this location."})
+            self.send_json({"selected": [], "explanation": "No observations found at this location in SPHEREx archive."})
             return
 
         result = self.selector.select(observations, ra=ra, dec=dec, mode=mode)
@@ -283,34 +265,18 @@ class SpherexApiHandler(BaseHTTPRequestHandler):
             # 1. Discover observations at user coordinates (fast DR1 targeted search)
             observations = self.search_archive(ra=ra, dec=dec, radius=radius, max_results=max_files * 2)
         except Exception as exc:
-            LOG.warning("IRSA live cutout search unreachable (%s). Serving cached local files.", exc)
-            observations = []
+            LOG.error("IRSA live cutout search unreachable: %s", exc)
+            self.send_json({
+                "status": "error",
+                "message": f"NASA IRSA live search failed: {exc}",
+                "records": [],
+            }, status=502)
+            return
 
         if not observations:
-            # Check if we already have local files to serve
-            local_files = list(self.paths.raw.glob("**/*.fits"))
-            if local_files:
-                records = []
-                for p in local_files[:max_files]:
-                    records.append({
-                        "observation_id": p.stem,
-                        "detector": "3",
-                        "filename": p.name,
-                        "relative_path": str(p.relative_to(self.paths.root)).replace("\\", "/"),
-                        "download_status": "existing",
-                        "render_url": f"/api/render?filename={p.name}&stretch=asinh",
-                    })
-                self.send_json({
-                    "status": "success",
-                    "ra": ra,
-                    "dec": dec,
-                    "records": records,
-                })
-                return
-
             self.send_json({
                 "status": "not_found",
-                "message": f"No SPHEREx observations found or reachable at RA={ra:.4f}, Dec={dec:.4f}",
+                "message": f"No SPHEREx observations found at RA={ra:.4f}, Dec={dec:.4f}",
                 "records": [],
             })
             return
@@ -548,9 +514,19 @@ class SpherexApiHandler(BaseHTTPRequestHandler):
 
     def handle_difference(self, query: dict[str, list[str]]) -> None:
         """Calculate real mathematical difference (Epoch B - Epoch A) on a shared WCS sky grid."""
-        files = sorted(list(self.paths.raw.glob("**/*.fits")), key=lambda p: p.stat().st_mtime)
+        files_param = query.get("files", [None])[0]
+        if files_param:
+            requested_names = [name.strip() for name in files_param.split(",") if name.strip()]
+            files = []
+            for name in requested_names:
+                matches = list(self.paths.raw.glob(f"**/{name}"))
+                if matches:
+                    files.append(matches[0])
+        else:
+            files = sorted(list(self.paths.raw.glob("**/*.fits")), key=lambda p: p.stat().st_mtime)
+
         if len(files) < 2:
-            self.send_error(400, "Need at least 2 FITS files to compute a difference image")
+            self.send_error(400, "Need at least 2 FITS files from the active query to compute a difference image")
             return
 
         first_idx = int(query.get("first", ["0"])[0])
@@ -727,7 +703,17 @@ class SpherexApiHandler(BaseHTTPRequestHandler):
         except (ValueError, TypeError):
             norm_x, norm_y = 0.5, 0.5
 
-        files = list(self.paths.raw.glob("**/*.fits"))
+        files_param = query.get("files", [None])[0]
+        if files_param:
+            requested_names = [name.strip() for name in files_param.split(",") if name.strip()]
+            files = []
+            for name in requested_names:
+                matches = list(self.paths.raw.glob(f"**/{name}"))
+                if matches:
+                    files.append(matches[0])
+        else:
+            files = list(self.paths.raw.glob("**/*.fits"))
+
         points = []
         for f in files:
             with fits.open(f) as hdul:
@@ -756,7 +742,18 @@ class SpherexApiHandler(BaseHTTPRequestHandler):
         target_det = query.get("detector", ["all"])[0]
         stretch = query.get("stretch", ["asinh"])[0]
         colormap = query.get("colormap", ["inferno"])[0]
-        files = list(self.paths.raw.glob("**/*.fits"))
+
+        files_param = query.get("files", [None])[0]
+        if files_param:
+            requested_names = [name.strip() for name in files_param.split(",") if name.strip()]
+            files = []
+            for name in requested_names:
+                matches = list(self.paths.raw.glob(f"**/{name}"))
+                if matches:
+                    files.append(matches[0])
+        else:
+            files = list(self.paths.raw.glob("**/*.fits"))
+
         if not files:
             self.send_error(404, "No FITS files available for co-addition")
             return

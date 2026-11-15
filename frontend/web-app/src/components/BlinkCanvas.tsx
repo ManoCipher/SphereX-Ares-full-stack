@@ -2,7 +2,7 @@ import React, { useRef, useEffect } from 'react';
 
 interface BlinkCanvasProps {
   imageSrc: string;
-  activeFilename: string;
+  activeFilename?: string;
   investigationMarker: { x: number; y: number } | null;
   onCanvasClick: (normX: number, normY: number) => void;
   isLoading?: boolean;
@@ -12,7 +12,6 @@ interface BlinkCanvasProps {
 
 export const BlinkCanvas: React.FC<BlinkCanvasProps> = ({
   imageSrc,
-  activeFilename,
   investigationMarker,
   onCanvasClick,
   isLoading = false,
@@ -169,63 +168,23 @@ export const BlinkCanvas: React.FC<BlinkCanvasProps> = ({
         </div>
       )}
 
-      {/* Clean File Header */}
-      {!isEmpty && !isLoading && (
-        <>
-          <div style={{
-            position: 'absolute',
-            top: '10px',
-            left: '10px',
-            backgroundColor: 'rgba(5, 8, 17, 0.85)',
-            backdropFilter: 'blur(6px)',
-            padding: '5px 10px',
-            borderRadius: '4px',
-            border: '1px solid #1e293b',
-            fontSize: '11px',
-            fontFamily: 'monospace',
-            color: '#94a3b8',
-            pointerEvents: 'none',
-          }}>
-            <span>FITS: </span>
-            <strong style={{ color: '#fff' }}>{activeFilename ? activeFilename.replace('_cutout.fits', '') : 'Raw Cutout Stream'}</strong>
-          </div>
-
-          <div style={{
-            position: 'absolute',
-            top: '10px',
-            right: '10px',
-            backgroundColor: 'rgba(5, 8, 17, 0.85)',
-            backdropFilter: 'blur(6px)',
-            padding: '4px 8px',
-            borderRadius: '4px',
-            border: '1px solid #1e293b',
-            fontSize: '10px',
-            fontFamily: 'monospace',
-            color: '#38bdf8',
-            pointerEvents: 'none',
-          }}>
-            WCS-ALIGNED PIXELS
-          </div>
-
-          {/* Click Guidance Prompt */}
-          {!investigationMarker && (
-            <div style={{
-              position: 'absolute',
-              bottom: '10px',
-              left: '50%',
-              transform: 'translateX(-50%)',
-              backgroundColor: 'rgba(5, 8, 17, 0.75)',
-              padding: '4px 12px',
-              borderRadius: '9999px',
-              fontSize: '10px',
-              fontFamily: 'monospace',
-              color: '#64748b',
-              pointerEvents: 'none',
-            }}>
-              Click any source on the image to measure astrometry
-            </div>
-          )}
-        </>
+      {/* Click Guidance Prompt */}
+      {!isEmpty && !isLoading && !investigationMarker && (
+        <div style={{
+          position: 'absolute',
+          bottom: '10px',
+          left: '50%',
+          transform: 'translateX(-50%)',
+          backgroundColor: 'rgba(5, 8, 17, 0.75)',
+          padding: '4px 12px',
+          borderRadius: '9999px',
+          fontSize: '10px',
+          fontFamily: 'monospace',
+          color: '#64748b',
+          pointerEvents: 'none',
+        }}>
+          Click any source on the image to measure astrometry
+        </div>
       )}
     </div>
   );

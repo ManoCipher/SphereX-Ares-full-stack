@@ -191,7 +191,10 @@ export function App() {
     if (fetchedExposures.length === 0) return;
     setInvestigationMarker({ x: normX, y: normY });
     setIsInvestigating(true);
-    fetchJson<any>(`/api/investigate?x=${normX}&y=${normY}&frame=${epochIdx}`)
+
+    // Pass filenames and coordinates of the active target's cutouts so backend inspects the EXACT active frames
+    const fileParam = filteredExposures.map((e) => encodeURIComponent(e.filename)).join(',');
+    fetchJson<any>(`/api/investigate?x=${normX}&y=${normY}&frame=${epochIdx}&files=${fileParam}&ra=${ra}&dec=${dec}`)
       .then((report) => {
         setCandidateReport(report);
         setIsInvestigating(false);

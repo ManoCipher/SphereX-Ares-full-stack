@@ -680,7 +680,18 @@ class SpherexApiHandler(BaseHTTPRequestHandler):
             self.send_error(400, "Invalid x, y or frame coordinate parameters")
             return
 
-        files = sorted(list(self.paths.raw.glob("**/*.fits")), key=lambda p: p.stat().st_mtime)
+        # Check if caller specified exact filenames for the active view
+        files_param = query.get("files", [None])[0]
+        if files_param:
+            requested_names = [name.strip() for name in files_param.split(",") if name.strip()]
+            files = []
+            for name in requested_names:
+                matches = list(self.paths.raw.glob(f"**/{name}"))
+                if matches:
+                    files.append(matches[0])
+        else:
+            files = sorted(list(self.paths.raw.glob("**/*.fits")), key=lambda p: p.stat().st_mtime)
+
         if len(files) < 2:
             self.send_json({
                 "verdict": "Insufficient frames",

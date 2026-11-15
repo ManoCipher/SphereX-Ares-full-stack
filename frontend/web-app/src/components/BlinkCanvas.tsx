@@ -5,6 +5,9 @@ interface BlinkCanvasProps {
   activeFilename: string;
   investigationMarker: { x: number; y: number } | null;
   onCanvasClick: (normX: number, normY: number) => void;
+  isLoading?: boolean;
+  loadingMessage?: string;
+  isEmpty?: boolean;
 }
 
 export const BlinkCanvas: React.FC<BlinkCanvasProps> = ({
@@ -12,10 +15,14 @@ export const BlinkCanvas: React.FC<BlinkCanvasProps> = ({
   activeFilename,
   investigationMarker,
   onCanvasClick,
+  isLoading = false,
+  loadingMessage = 'Loading...',
+  isEmpty = false,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
   const handleClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (isLoading || isEmpty) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
     const rect = canvas.getBoundingClientRect();
@@ -32,6 +39,13 @@ export const BlinkCanvas: React.FC<BlinkCanvasProps> = ({
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
+    if (isEmpty || !imageSrc) {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = '#050811';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      return;
+    }
+
     const img = new Image();
     img.crossOrigin = 'anonymous';
     img.src = imageSrc;
@@ -42,7 +56,7 @@ export const BlinkCanvas: React.FC<BlinkCanvasProps> = ({
       ctx.fillStyle = '#050811';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-      // Draw clean, un-inverted FITS image pixels
+      // Draw clean FITS image pixels
       ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
 
       // Only draw marker if the user has explicitly clicked to investigate
@@ -62,11 +76,11 @@ export const BlinkCanvas: React.FC<BlinkCanvasProps> = ({
         ctx.stroke();
 
         ctx.fillStyle = '#38bdf8';
-        ctx.font = '10px "JetBrains Mono", monospace';
+        ctx.font = '10px monospace';
         ctx.fillText('CANDIDATE', mx + 14, my - 6);
       }
     };
-  }, [imageSrc, investigationMarker]);
+  }, [imageSrc, investigationMarker, isEmpty]);
 
   return (
     <div style={{
@@ -82,7 +96,7 @@ export const BlinkCanvas: React.FC<BlinkCanvasProps> = ({
       alignItems: 'center',
       justifyContent: 'center',
       boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.5)',
-      cursor: 'crosshair',
+      cursor: (isEmpty || isLoading) ? 'default' : 'crosshair',
     }}>
       <canvas
         ref={canvasRef}
@@ -92,59 +106,125 @@ export const BlinkCanvas: React.FC<BlinkCanvasProps> = ({
         style={{ width: '100%', height: '100%', objectFit: 'contain' }}
       />
 
-      {/* Clean, Non-intrusive File Header */}
-      <div style={{
-        position: 'absolute',
-        top: '10px',
-        left: '10px',
-        backgroundColor: 'rgba(5, 8, 17, 0.85)',
-        backdropFilter: 'blur(6px)',
-        padding: '5px 10px',
-        borderRadius: '4px',
-        border: '1px solid #1e293b',
-        fontSize: '11px',
-        fontFamily: 'monospace',
-        color: '#94a3b8',
-        pointerEvents: 'none',
-      }}>
-        <span>FITS: </span>
-        <strong style={{ color: '#fff' }}>{activeFilename ? activeFilename.replace('_cutout.fits', '') : 'Raw Cutout Stream'}</strong>
-      </div>
-
-      <div style={{
-        position: 'absolute',
-        top: '10px',
-        right: '10px',
-        backgroundColor: 'rgba(5, 8, 17, 0.85)',
-        backdropFilter: 'blur(6px)',
-        padding: '4px 8px',
-        borderRadius: '4px',
-        border: '1px solid #1e293b',
-        fontSize: '10px',
-        fontFamily: 'monospace',
-        color: '#38bdf8',
-        pointerEvents: 'none',
-      }}>
-        ● RAW FITS PIXELS
-      </div>
-
-      {/* Click Guidance Prompt */}
-      {!investigationMarker && (
+      {/* Loading Overlay */}
+      {isLoading && (
         <div style={{
           position: 'absolute',
-          bottom: '10px',
-          left: '50%',
-          transform: 'translateX(-50%)',
-          backgroundColor: 'rgba(5, 8, 17, 0.75)',
-          padding: '4px 12px',
-          borderRadius: '9999px',
-          fontSize: '10px',
+          inset: 0,
+          backgroundColor: 'rgba(5, 8, 17, 0.88)',
+          backdropFilter: 'blur(4px)',
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: '12px',
+          zIndex: 10,
+          color: '#38bdf8',
           fontFamily: 'monospace',
+          fontSize: '12px',
+        }}>
+          <div style={{
+            width: '32px',
+            height: '32px',
+            border: '3px solid #1e293b',
+            borderTop: '3px solid #38bdf8',
+            borderRadius: '50%',
+            animation: 'spin 1s linear infinite',
+          }} />
+          <style>{`
+            @keyframes spin {
+              0% { transform: rotate(0deg); }
+              100% { transform: rotate(360deg); }
+            }
+          `}</style>
+          <span>{loadingMessage}</span>
+        </div>
+      )}
+
+      {/* Empty State Prompt */}
+      {isEmpty && !isLoading && (
+        <div style={{
+          position: 'absolute',
+          inset: 0,
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: '10px',
+          padding: '24px',
+          textAlign: 'center',
           color: '#64748b',
+          fontFamily: 'monospace',
+          fontSize: '12px',
           pointerEvents: 'none',
         }}>
-          Click any source on the image to measure astrometry
+          <div style={{ width: '48px', height: '48px', borderRadius: '50%', border: '1px dashed #334155', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#38bdf8' }}>
+            +
+          </div>
+          <strong style={{ color: '#cbd5e1' }}>No Observations Loaded</strong>
+          <p style={{ maxWidth: '300px', margin: 0, lineHeight: '1.4' }}>
+            Select a preset benchmark object above (e.g., WISE 0855 or Barnard's Star) or enter coordinates, then click <strong>Fetch FITS</strong> or <strong>Auto Select</strong>.
+          </p>
         </div>
+      )}
+
+      {/* Clean File Header */}
+      {!isEmpty && !isLoading && (
+        <>
+          <div style={{
+            position: 'absolute',
+            top: '10px',
+            left: '10px',
+            backgroundColor: 'rgba(5, 8, 17, 0.85)',
+            backdropFilter: 'blur(6px)',
+            padding: '5px 10px',
+            borderRadius: '4px',
+            border: '1px solid #1e293b',
+            fontSize: '11px',
+            fontFamily: 'monospace',
+            color: '#94a3b8',
+            pointerEvents: 'none',
+          }}>
+            <span>FITS: </span>
+            <strong style={{ color: '#fff' }}>{activeFilename ? activeFilename.replace('_cutout.fits', '') : 'Raw Cutout Stream'}</strong>
+          </div>
+
+          <div style={{
+            position: 'absolute',
+            top: '10px',
+            right: '10px',
+            backgroundColor: 'rgba(5, 8, 17, 0.85)',
+            backdropFilter: 'blur(6px)',
+            padding: '4px 8px',
+            borderRadius: '4px',
+            border: '1px solid #1e293b',
+            fontSize: '10px',
+            fontFamily: 'monospace',
+            color: '#38bdf8',
+            pointerEvents: 'none',
+          }}>
+            WCS-ALIGNED PIXELS
+          </div>
+
+          {/* Click Guidance Prompt */}
+          {!investigationMarker && (
+            <div style={{
+              position: 'absolute',
+              bottom: '10px',
+              left: '50%',
+              transform: 'translateX(-50%)',
+              backgroundColor: 'rgba(5, 8, 17, 0.75)',
+              padding: '4px 12px',
+              borderRadius: '9999px',
+              fontSize: '10px',
+              fontFamily: 'monospace',
+              color: '#64748b',
+              pointerEvents: 'none',
+            }}>
+              Click any source on the image to measure astrometry
+            </div>
+          )}
+        </>
       )}
     </div>
   );

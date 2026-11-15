@@ -72,11 +72,11 @@ export const ImageGallery: React.FC<ImageGalleryProps> = ({
               </div>
 
               <div style={{ fontSize: '9px', color: '#64748b' }}>
-                {exp.date_obs ? exp.date_obs.replace('T', ' ').slice(0, 16) : `MJD ${exp.mjd.toFixed(1)}`}
+                {exp.date_obs ? exp.date_obs.replace('T', ' ').slice(0, 16) : (exp.mjd != null && !isNaN(Number(exp.mjd)) ? `MJD ${Number(exp.mjd).toFixed(1)}` : `Epoch ${idx + 1}`)}
               </div>
 
               <div style={{ fontSize: '9px', color: '#38bdf8' }}>
-                λ: {exp.wavelength_um.toFixed(2)} µm
+                λ: {exp.wavelength_um != null && !isNaN(Number(exp.wavelength_um)) ? `${Number(exp.wavelength_um).toFixed(2)} µm` : 'SPHEREx'}
               </div>
 
               <div style={{ fontSize: '8px', color: '#475569', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>

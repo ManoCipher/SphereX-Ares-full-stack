@@ -88,7 +88,7 @@ class Target:
 # parallax are from Luhman & Esplin 2016, AJ 152, 78, Table 4.
 WISE_0855 = Target(
     key="wise0855",
-    name="WISE J085510.83-071442.5",
+    name="WISE 0855 (Brown Dwarf)",
     ra_deg=133.7851375,  # 08:55:08.433
     dec_deg=-7.2443028,  # -07:14:39.49
     reference_time=Time(56986.817, format="mjd", scale="utc"),
@@ -106,7 +106,81 @@ WISE_0855 = Target(
     ),
 )
 
-TARGETS = {WISE_0855.key: WISE_0855}
+BARNARDS_STAR = Target(
+    key="barnard",
+    name="Barnard's Star (High PM)",
+    ra_deg=269.452075,
+    dec_deg=4.693392,
+    reference_time=Time(57205.0, format="mjd", scale="utc"),
+    pm_ra_cosdec_mas_yr=-798.58,
+    pm_dec_mas_yr=10328.12,
+    parallax_mas=546.98,
+    position_sigma_mas=1.0,
+    pm_ra_sigma_mas_yr=0.5,
+    pm_dec_sigma_mas_yr=0.5,
+    parallax_sigma_mas=0.5,
+    source_url="https://doi.org/10.1051/0004-6361/201832964",
+    source_note="Gaia DR2 astrometry; highest known proper motion star (~10.3 arcsec/yr).",
+)
+
+EPSILON_INDI_B = Target(
+    key="eps_indi_b",
+    name="Epsilon Indi B (Brown Dwarf)",
+    ra_deg=330.8402,
+    dec_deg=-56.78597,
+    reference_time=Time(53000.0, format="mjd", scale="utc"),
+    pm_ra_cosdec_mas_yr=3961.4,
+    pm_dec_mas_yr=-2538.3,
+    parallax_mas=275.8,
+    position_sigma_mas=20.0,
+    pm_ra_sigma_mas_yr=5.0,
+    pm_dec_sigma_mas_yr=5.0,
+    parallax_sigma_mas=2.0,
+    source_url="https://doi.org/10.1051/0004-6361:20031358",
+    source_note="Scholz et al. (2003); nearby brown dwarf binary pair orbiting Epsilon Indi (4.7 arcsec/yr).",
+)
+
+RW_AURIGAE = Target(
+    key="rw_aur",
+    name="RW Aurigae (Variable T Tauri)",
+    ra_deg=77.1064,
+    dec_deg=30.4014,
+    reference_time=Time(57205.0, format="mjd", scale="utc"),
+    pm_ra_cosdec_mas_yr=1.2,
+    pm_dec_mas_yr=-20.5,
+    parallax_mas=6.1,
+    position_sigma_mas=1.0,
+    pm_ra_sigma_mas_yr=0.5,
+    pm_dec_sigma_mas_yr=0.5,
+    parallax_sigma_mas=0.5,
+    source_url="https://doi.org/10.1051/0004-6361/201832964",
+    source_note="Classical T Tauri eruptive variable binary showing occultation-driven infrared dimming.",
+)
+
+R_DRACONIS = Target(
+    key="r_dra",
+    name="R Draconis (Mira Variable)",
+    ra_deg=248.1677,
+    dec_deg=66.7529,
+    reference_time=Time(57205.0, format="mjd", scale="utc"),
+    pm_ra_cosdec_mas_yr=-12.5,
+    pm_dec_mas_yr=22.4,
+    parallax_mas=1.5,
+    position_sigma_mas=1.0,
+    pm_ra_sigma_mas_yr=0.5,
+    pm_dec_sigma_mas_yr=0.5,
+    parallax_sigma_mas=0.5,
+    source_url="https://doi.org/10.1051/0004-6361/201832964",
+    source_note="Mira-type high-amplitude pulsating red giant with ~245-day cycle.",
+)
+
+TARGETS = {
+    WISE_0855.key: WISE_0855,
+    BARNARDS_STAR.key: BARNARDS_STAR,
+    EPSILON_INDI_B.key: EPSILON_INDI_B,
+    RW_AURIGAE.key: RW_AURIGAE,
+    R_DRACONIS.key: R_DRACONIS,
+}
 
 
 def get_target(key: str) -> Target:

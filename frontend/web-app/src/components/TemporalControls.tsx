@@ -29,6 +29,8 @@ interface TemporalControlsProps {
   onToggleDifferenceMode: () => void;
   invert: boolean;
   onToggleInvert: () => void;
+  epochDate?: string;
+  epochDetector?: string;
 }
 
 export const TemporalControls: React.FC<TemporalControlsProps> = ({
@@ -60,6 +62,8 @@ export const TemporalControls: React.FC<TemporalControlsProps> = ({
   onToggleDifferenceMode,
   invert,
   onToggleInvert,
+  epochDate,
+  epochDetector,
 }) => {
   return (
     <div style={{
@@ -140,8 +144,8 @@ export const TemporalControls: React.FC<TemporalControlsProps> = ({
             {invert ? 'Invert ON' : 'Invert'}
           </button>
 
-          <span style={{ color: '#94a3b8' }}>
-            Active Exposure: <strong style={{ color: '#f8fafc' }}>{curFilename ? curFilename.replace('_cutout.fits', '') : `Epoch ${epochIdx + 1}/${totalEpochs}`}</strong>
+          <span style={{ color: '#94a3b8', fontSize: '11px' }}>
+            {curFilename ? curFilename.replace('_cutout.fits', '') : `Epoch ${epochIdx + 1}/${totalEpochs}`}
           </span>
         </div>
 
@@ -191,11 +195,17 @@ export const TemporalControls: React.FC<TemporalControlsProps> = ({
         )}
       </div>
 
-      {/* Epoch Stepper Bar */}
+      {/* Epoch Stepper Bar with Detailed Astronomical Timestamp */}
       <div>
-        <div style={{ display: 'flex', justifyContent: 'space-between', color: '#64748b', fontSize: '11px', marginBottom: '4px' }}>
-          <span>Epoch {epochIdx + 1} of {totalEpochs}</span>
-          <span>{totalEpochs > 1 ? `Scrubbing ${totalEpochs} WCS-Aligned Exposures` : 'Single Exposure View'}</span>
+        <div style={{ display: 'flex', justifyContent: 'space-between', color: '#94a3b8', fontSize: '11px', marginBottom: '4px' }}>
+          <span>
+            Epoch <strong style={{ color: '#38bdf8' }}>{epochIdx + 1}</strong> of <strong style={{ color: '#f8fafc' }}>{totalEpochs}</strong>
+            {epochDate && <span style={{ color: '#64748b', marginLeft: '8px' }}>Obs: {epochDate.split('T')[0]}</span>}
+            {epochDetector && <span style={{ color: '#a855f7', marginLeft: '6px' }}>Array {epochDetector}</span>}
+          </span>
+          <span style={{ color: '#64748b' }}>
+            {totalEpochs > 1 ? `Scrubbing ${totalEpochs} Temporal Exposures` : 'Single Exposure View'}
+          </span>
         </div>
         <input
           type="range"
@@ -209,31 +219,30 @@ export const TemporalControls: React.FC<TemporalControlsProps> = ({
         />
       </div>
 
-      {/* Astronomical Stretch & Calibration Slider Deck */}
+      {/* Astronomical Stretch & Calibration Deck */}
       <div style={{
         padding: '12px',
         backgroundColor: '#070b14',
         borderRadius: '6px',
         border: '1px solid #1e293b',
         display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))',
+        gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))',
         gap: '12px',
         alignItems: 'center',
       }}>
-        {/* Color Palette (Default: Visible RGB Composite) */}
+        {/* Color Palette (Default: Inferno) */}
         <div>
-          <label style={{ display: 'block', color: '#94a3b8', fontSize: '10px', marginBottom: '4px' }}>Render Mode / Palette</label>
+          <label style={{ display: 'block', color: '#94a3b8', fontSize: '10px', marginBottom: '4px' }}>Palette</label>
           <select
             value={colormap}
-            title="Select False-Color composite or standard astronomical colormaps"
+            title="Select single-band false color palette"
             onChange={(e) => onChangeColormap(e.target.value)}
             style={{ width: '100%', padding: '5px 6px', backgroundColor: '#0c1322', border: '1px solid #1e293b', color: '#fff', borderRadius: '4px' }}
           >
-            <option value="rgb">Visible RGB Composite (Default)</option>
-            <option value="gray">Greyscale (Raw Instrument)</option>
-            <option value="coolwarm">Coolwarm (Difference Bipolar)</option>
-            <option value="inferno">Inferno</option>
+            <option value="inferno">Inferno (Default)</option>
             <option value="viridis">Viridis</option>
+            <option value="gray">Greyscale</option>
+            <option value="coolwarm">Coolwarm</option>
             <option value="magma">Magma</option>
             <option value="plasma">Plasma</option>
           </select>
@@ -241,63 +250,64 @@ export const TemporalControls: React.FC<TemporalControlsProps> = ({
 
         {/* Stretch Selector */}
         <div>
-          <label style={{ display: 'block', color: '#94a3b8', fontSize: '10px', marginBottom: '4px' }}>Stretch Algorithm</label>
+          <label style={{ display: 'block', color: '#94a3b8', fontSize: '10px', marginBottom: '4px' }}>Stretch</label>
           <select
             value={stretch}
             title="Select mathematical pixel stretching algorithm"
             onChange={(e) => onChangeStretch(e.target.value)}
             style={{ width: '100%', padding: '5px 6px', backgroundColor: '#0c1322', border: '1px solid #1e293b', color: '#fff', borderRadius: '4px' }}
           >
+            <option value="asinh">asinh (Default Soft)</option>
             <option value="linear">Linear</option>
-            <option value="asinh">asinh (Astrophysical Softness)</option>
             <option value="log">Logarithmic</option>
           </select>
         </div>
 
-        {/* Black Point Slider (Min Cut %) */}
+        {/* Coordinated Dual Contrast Sliders (Black Point 0-50%, White Point 50-100%) */}
         <div>
           <div style={{ display: 'flex', justifyContent: 'space-between', color: '#94a3b8', fontSize: '10px', marginBottom: '4px' }}>
-            <span>Min Cut (Black Point)</span>
+            <span>Black Point</span>
             <span style={{ color: '#38bdf8' }}>{minCutPercent}%</span>
           </div>
           <input
             type="range"
             min="0"
-            max="40"
+            max="50"
+            step="0.5"
             value={minCutPercent}
-            title={`Lower intensity percentile clip: ${minCutPercent}%`}
+            title={`Background floor cutoff: ${minCutPercent}% (0% - 50%)`}
             onChange={(e) => onChangeMinCutPercent(parseFloat(e.target.value))}
             style={{ width: '100%', accentColor: '#38bdf8' }}
           />
         </div>
 
-        {/* White Point Slider (Max Cut %) */}
         <div>
           <div style={{ display: 'flex', justifyContent: 'space-between', color: '#94a3b8', fontSize: '10px', marginBottom: '4px' }}>
-            <span>Max Cut (White Point)</span>
+            <span>White Point</span>
             <span style={{ color: '#38bdf8' }}>{maxCutPercent}%</span>
           </div>
           <input
             type="range"
-            min="60"
+            min="50"
             max="100"
+            step="0.5"
             value={maxCutPercent}
-            title={`Upper intensity percentile clip: ${maxCutPercent}%`}
+            title={`Source saturation cutoff: ${maxCutPercent}% (50% - 100%)`}
             onChange={(e) => onChangeMaxCutPercent(parseFloat(e.target.value))}
             style={{ width: '100%', accentColor: '#38bdf8' }}
           />
         </div>
 
-        {/* Detector Filter */}
+        {/* Detector Filter for Temporal Blinking */}
         <div>
           <label style={{ display: 'block', color: '#94a3b8', fontSize: '10px', marginBottom: '4px' }}>Detector Filter</label>
           <select
             value={selectedDetector}
-            title="Filter displayed exposures to a single focal plane detector array"
+            title="Filter to a single detector array so temporal blinking compares identical wavelengths over time"
             onChange={(e) => onChangeDetector(e.target.value)}
             style={{ width: '100%', padding: '5px 6px', backgroundColor: '#0c1322', border: '1px solid #1e293b', color: '#fff', borderRadius: '4px' }}
           >
-            <option value="all">All Available Arrays</option>
+            <option value="all">All Arrays</option>
             <option value="1">Array 1 (0.75-1.1µm)</option>
             <option value="2">Array 2 (1.1-1.6µm)</option>
             <option value="3">Array 3 (1.6-2.4µm)</option>

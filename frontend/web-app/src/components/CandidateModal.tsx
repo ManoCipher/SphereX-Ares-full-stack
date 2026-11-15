@@ -133,11 +133,11 @@ export const CandidateModal: React.FC<CandidateModalProps> = ({
                     {report.verdict || 'Astrometry Analysis Complete'}
                   </div>
                 </div>
-                {report.significance_sigma && (
+                {report.significance_sigma != null && !isNaN(Number(report.significance_sigma)) && (
                   <div style={{ textAlign: 'right' }}>
                     <span style={{ color: '#94a3b8', fontSize: '10px' }}>Significance</span>
                     <div style={{ fontSize: '13px', color: '#38bdf8', fontWeight: 'bold' }}>
-                      {report.significance_sigma.toFixed(1)} σ
+                      {Number(report.significance_sigma).toFixed(1)} σ
                     </div>
                   </div>
                 )}
@@ -148,7 +148,7 @@ export const CandidateModal: React.FC<CandidateModalProps> = ({
               </p>
 
               {/* Numerical Metrics */}
-              {report.motion_arcsec_per_year !== undefined && !isNaN(report.motion_arcsec_per_year) && (
+              {report.motion_arcsec_per_year != null && !isNaN(Number(report.motion_arcsec_per_year)) && (
                 <div style={{
                   display: 'grid',
                   gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))',
@@ -161,19 +161,19 @@ export const CandidateModal: React.FC<CandidateModalProps> = ({
                   <div>
                     <span style={{ color: '#64748b', fontSize: '10px' }}>Proper Motion</span>
                     <div style={{ color: '#fff', fontWeight: 'bold' }}>
-                      {report.motion_arcsec_per_year.toFixed(2)} "/yr
+                      {Number(report.motion_arcsec_per_year).toFixed(2)} "/yr
                     </div>
                   </div>
                   <div>
                     <span style={{ color: '#64748b', fontSize: '10px' }}>Position Angle</span>
                     <div style={{ color: '#fff', fontWeight: 'bold' }}>
-                      {report.position_angle_deg?.toFixed(1)}°
+                      {report.position_angle_deg != null && !isNaN(Number(report.position_angle_deg)) ? `${Number(report.position_angle_deg).toFixed(1)}°` : 'N/A'}
                     </div>
                   </div>
                   <div>
                     <span style={{ color: '#64748b', fontSize: '10px' }}>Time Baseline</span>
                     <div style={{ color: '#fff', fontWeight: 'bold' }}>
-                      {report.time_span_days?.toFixed(0)} days
+                      {report.time_span_days != null && !isNaN(Number(report.time_span_days)) ? `${Number(report.time_span_days).toFixed(0)} days` : 'N/A'}
                     </div>
                   </div>
                   <div>

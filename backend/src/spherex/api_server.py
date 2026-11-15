@@ -46,6 +46,16 @@ LOG = logging.getLogger("spherex.api")
 logging.basicConfig(level=logging.INFO)
 
 
+def _safe_float(val: Any, default: float) -> float:
+    if val is None:
+        return default
+    try:
+        f = float(val)
+        return f if np.isfinite(f) else default
+    except (ValueError, TypeError):
+        return default
+
+
 class SpherexApiHandler(BaseHTTPRequestHandler):
     client = SPHERExClient(collections=("spherex_dr1",), timeout=25)
     # Fast 0.08° cutout (WiseView style ~48x48 to 100x100 pixel window) for instant downloads
@@ -276,18 +286,17 @@ class SpherexApiHandler(BaseHTTPRequestHandler):
             })
             return
 
-        # 2. Selection: Smart selection if requested, else prioritize chronological single detector
-        if smart_enabled and observations:
+        # 2. Selection: Use smart selection by default for the requested mode (time or spectral)
+        if observations:
             try:
                 smart_res = self.selector.select(observations, ra=ra, dec=dec, mode=mode)
                 selected_obs = list(smart_res.observations)[:max_files] if smart_res.observations else observations[:max_files]
             except Exception as exc:
-                LOG.warning("Smart selection in fetch_cutouts failed (%s). Falling back.", exc)
+                LOG.warning("Observation selector failed (%s). Falling back.", exc)
                 det_preferred = [o for o in observations if str(o.get("detector")) in {"6", "3"}]
                 selected_obs = det_preferred[:max_files] if len(det_preferred) >= 2 else observations[:max_files]
         else:
-            det_preferred = [o for o in observations if str(o.get("detector")) in {"6", "3"}]
-            selected_obs = det_preferred[:max_files] if len(det_preferred) >= 2 else observations[:max_files]
+            selected_obs = []
 
         # 3. Download missing FITS cutouts from IRSA IBE
         try:
@@ -296,31 +305,74 @@ class SpherexApiHandler(BaseHTTPRequestHandler):
             LOG.warning("Cutout download failed (%s). Using existing local files.", exc)
             resolved = []
 
-        # 4. Format result records with local FITS details
+        # 4. Format result records with rich local FITS metadata
         records = []
         for r in resolved:
             file_path = r.get("file_path")
             if file_path and Path(file_path).is_file():
                 p = Path(file_path)
+                try:
+                    with fits.open(p) as hdul:
+                        hdr = hdul["IMAGE"].header if "IMAGE" in hdul else hdul[0].header
+                        shape = list(hdul["IMAGE"].shape) if "IMAGE" in hdul else [12, 12]
+                        mjd = _safe_float(hdr.get("MJD-OBS"), _safe_float(r.get("observation_start_mjd"), 60800.0))
+                        date_obs = str(hdr.get("DATE-OBS") or r.get("observation_timestamp") or "")
+                        detector = str(hdr.get("DETECTOR") or r.get("detector") or "3")
+                        band = str(hdr.get("BAND") or r.get("band") or "SPHEREx")
+                        wavel = _safe_float(hdr.get("WAVELMIN"), _safe_float(r.get("wavelength_min_um"), 2.0))
+                except Exception:
+                    shape = [12, 12]
+                    mjd = _safe_float(r.get("observation_start_mjd"), 60800.0)
+                    date_obs = str(r.get("observation_timestamp") or "")
+                    detector = str(r.get("detector") or "3")
+                    band = str(r.get("band") or "SPHEREx")
+                    wavel = _safe_float(r.get("wavelength_min_um"), 2.0)
+
                 records.append({
-                    "observation_id": r.get("observation_id") or r.get("obs_id"),
-                    "detector": r.get("detector"),
+                    "observation_id": r.get("observation_id") or r.get("obs_id") or p.stem,
+                    "obs_id": r.get("observation_id") or r.get("obs_id") or p.stem,
+                    "detector": detector,
+                    "band": band,
                     "filename": p.name,
                     "relative_path": str(p.relative_to(self.paths.root)).replace("\\", "/"),
+                    "mjd": mjd,
+                    "date_obs": date_obs,
+                    "wavelength_um": wavel,
+                    "shape": shape,
                     "download_status": r.get("download_status", "existing"),
                     "render_url": f"/api/render?filename={p.name}&stretch=asinh",
                 })
 
         if not records:
             for p in list(self.paths.raw.glob("**/*.fits"))[:max_files]:
+                try:
+                    with fits.open(p) as hdul:
+                        hdr = hdul["IMAGE"].header if "IMAGE" in hdul else hdul[0].header
+                        shape = list(hdul["IMAGE"].shape) if "IMAGE" in hdul else [12, 12]
+                        mjd = _safe_float(hdr.get("MJD-OBS"), 60800.0)
+                        date_obs = str(hdr.get("DATE-OBS") or "")
+                        detector = str(hdr.get("DETECTOR") or "3")
+                        band = str(hdr.get("BAND") or "SPHEREx")
+                        wavel = _safe_float(hdr.get("WAVELMIN"), 2.0)
+                except Exception:
+                    shape, mjd, date_obs, detector, band, wavel = [12, 12], 60800.0, "", "3", "SPHEREx", 2.0
+
                 records.append({
                     "observation_id": p.stem,
-                    "detector": "3",
+                    "obs_id": p.stem,
+                    "detector": detector,
+                    "band": band,
                     "filename": p.name,
                     "relative_path": str(p.relative_to(self.paths.root)).replace("\\", "/"),
+                    "mjd": mjd,
+                    "date_obs": date_obs,
+                    "wavelength_um": wavel,
+                    "shape": shape,
                     "download_status": "existing",
                     "render_url": f"/api/render?filename={p.name}&stretch=asinh",
                 })
+
+        records.sort(key=lambda r: r.get("mjd", 0.0))
 
         self.send_json({
             "status": "success",
@@ -375,9 +427,9 @@ class SpherexApiHandler(BaseHTTPRequestHandler):
                     "obs_id": hdr.get("OBS_ID", f.stem),
                     "detector": str(hdr.get("DETECTOR", "3")),
                     "band": hdr.get("BAND", "SPHEREx"),
-                    "mjd": float(hdr.get("MJD-OBS", 60800.0)),
-                    "date_obs": hdr.get("DATE-OBS", ""),
-                    "wavelength_um": float(hdr.get("WAVELMIN", 2.0)),
+                    "mjd": _safe_float(hdr.get("MJD-OBS"), 60800.0),
+                    "date_obs": str(hdr.get("DATE-OBS") or ""),
+                    "wavelength_um": _safe_float(hdr.get("WAVELMIN"), 2.0),
                     "shape": shape,
                     "covers_target": covers_target,
                 })

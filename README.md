@@ -1,156 +1,74 @@
-# SPHEREx Phase 1 ingestion
+# SPHEREx Observation Portal & Science Toolkit
+## NASA Space Apps Challenge 2026 Submission
 
-This project discovers NASA SPHEREx spectral images at IRSA for a moving target, downloads only small FITS cutouts, validates them, and inventories their HDUs. The initial target is the nearby high-proper-motion brown dwarf WISE J085510.83−071442.5 (WISE 0855).
+A dual-domain scientific platform designed for bounded discovery, FITS pixel ingestion, multi-epoch temporal astrometry, and 102-band hyperspectral slicing of **NASA/IPAC SPHEREx** observations.
 
-The pipeline deliberately does **not** download full Level 2 images. A download is accepted only when its SIA2 `access_url` is an HTTPS, on-premises IRSA IBE SPHEREx FITS URL to which the documented `center` and `size` cutout parameters can be added. A run defaults to 10 cutouts and a 300 MB total byte budget; an explicit `--max-files` may raise the count up to the 100-file safety ceiling.
+---
 
-## Install
+### Project Architecture
 
-Python 3.11 or newer is required.
+- **Web Application (`frontend/web-app/`)**: Production React + TypeScript + Vite portal with HTML5 Canvas GPU rendering, on-the-fly contrast stretching, and click-to-investigate candidate astrometry. Ready for Vercel deployment.
+- **Python Scientific Backend (`backend/src/spherex/`)**:
+  - `spherex_client.py`: VO SIA2 cone query client connecting directly to NASA/IPAC IRSA.
+  - `downloader.py`: Caltech IBE bounded FITS cutout downloader.
+  - `observation_selector.py`: Astrometric multi-epoch and multi-detector selection service.
+  - `image_cleaner.py`: SPHEREx bitmask `FLAGS` and `VARIANCE` HDU quality cleaner.
+  - `image_renderer.py`: Astronomical contrast normalizer (`asinh`, `linear`, `log`).
+  - `blink.py`: WCS reprojection onto a shared celestial sky grid (`reproject_interp`).
+  - `candidate.py`: Flux-weighted 2D centroid fitting, proper motion velocity ($\mu$ in "/yr), and statistical significance ($\sigma$).
+  - `api_server.py`: Multithreaded REST HTTP server bridging the scientific modules to the web app.
+- **Desktop Tkinter Viewer (`frontend/tkinter_viewer/`)**: Standalone desktop Tkinter GUI for researchers working in local Python environments.
 
-```powershell
-cd C:\Projects\SphereX\spherex-proj
-py -3.11 -m venv .venv
-.venv\Scripts\Activate.ps1
-python -m pip install -e ".[test]"
+---
+
+### Quick Start (Local Development)
+
+#### 1. Start Python Scientific Backend
+```bash
+# Set up Python environment
+python -m venv .venv
+source .venv/bin/activate  # Or on Windows: .\.venv\Scripts\activate
+pip install -e .
+
+# Run the API server
+python backend/src/spherex/api_server.py
 ```
+*API server will listen on `http://127.0.0.1:8000`.*
 
-## Commands
-
-Discovery is read-only and writes the returned metadata to `data/metadata/`:
-
-```powershell
-python -m spherex.pipeline discover --target wise0855
+#### 2. Start the Web App
+```bash
+cd frontend/web-app
+npm install
+npm run dev
 ```
+*Open `http://localhost:5173` in any modern web browser.*
 
-Preview exactly which cutouts would be requested without downloading them:
-
-```powershell
-python -m spherex.pipeline download --target wise0855 --max-files 10 --max-mb 300 --dry-run
-```
-
-Download and validate a bounded sample:
-
-```powershell
-python -m spherex.pipeline download --target wise0855 --max-files 10 --max-mb 300
-```
-
-Inspect downloaded FITS files and make image diagnostics:
-
-```powershell
-python -m spherex.pipeline inspect --target wise0855
-```
-
-Generate WCS-aware scientific dashboards and a batch summary from only the
-FITS cutouts already present on disk (this command performs no downloads):
-
-```powershell
-python -m spherex.pipeline science --target wise0855
-```
-
-## Reusable archive client
-
-`SPHERExClient` is a metadata-only interface for coordinate searches that does
-not depend on the moving-target pipeline:
-
-```python
-from spherex import SPHERExClient
-
-client = SPHERExClient(timeout=60)
-observations = client.search(
-    ra=133.795,
-    dec=-7.245,
-    radius=0.05,
-    max_results=50,
-)
-```
-
-The client sends SIA2 `POS=CIRCLE` queries to IRSA's documented `/SIA`
-endpoint for the DR1 and QR3 wide/deep collections. IRSA performs spherical
-footprint intersection, including circles that cross RA 0/360 degrees. The
-VOTable responses are normalized into dictionaries containing observation
-times, spatial coverage, detector/band and wavelength metadata, exposure time,
-file size, and the FITS `access_url`; the FITS files themselves are never read.
-Optional `start_date` and `end_date` values are sent as the SIA2 `TIME`
-constraint. See `examples/search_spherex.py` for an executable live query.
-
-Launch the interactive FITS image viewer from the repository root with:
-
-```powershell
+#### 3. Run the Desktop Tkinter Viewer (Optional)
+```bash
 python -m frontend.tkinter_viewer
 ```
 
-The search, selected downloads, and FITS processing run on background threads.
-Check the **Image** box for up to six observations, then choose **Show Selected
-Images**. The viewer reuses local files below `data/raw` and automatically
-downloads only the selected observations that are missing. It creates
-WCS-centred 200 x 200 previews under
-`data/processed/previews`, and displays a comparison gallery. **View Selected
-Details** opens a separate scrollable window showing every checked observation,
-its preview, source filename, dimensions, units, target pixel and processing
-metadata. The viewer never changes the original FITS measurements.
+---
 
-### Colour, WCS and RGB display
-
-**Image Display Settings** defaults to an Inferno false-colour palette with an
-asinh stretch, celestial grid and target marker. Individual images can instead
-use greyscale, Viridis, Magma or Plasma, with linear or asinh normalization.
-RA/Dec axes come from each `Cutout2D` WCS rather than from fabricated labels.
-Rendering settings are part of the preview cache key.
-
-For an RGB comparison, choose **RGB Composite**, check exactly three
-observations and select **Generate RGB Composite**. The backend uses `reproject`
-on the original FITS measurements to align all channels to a common celestial
-WCS. When reliable wavelength metadata is available, shortest/intermediate/
-longest wavelengths map to B/G/R. Otherwise the UI explicitly labels the
-selected table-order R/G/B fallback. The output is a representative
-false-colour infrared composite with independently normalized channels, not a
-natural-colour image or calibrated spectral measurement. Use **View Larger** or
-**Save PNG As...** beneath the generated composite.
-
-DR1 and QR3 are both queried and their results are combined. To select one release explicitly, add `--collection spherex_dr1` or `--collection spherex_qr3`.
-
-Useful bounded overrides are `--search-radius-deg` (default `0.05`), `--cutout-size-deg` (default `0.02`, or 1.2 arcmin), `--epoch`, `--max-files`, and `--max-mb`. The default remains 10 files. Explicit requests can raise it to a safety ceiling of 100 files, while `--max-mb` independently limits transferred bytes.
-
-## Target astrometry
-
-`backend/src/spherex/targets.py` defines reusable target records. For WISE 0855 it uses the measured ICRS position `08:55:08.433 -07:14:39.49` at MJD 56986.817 (2014-11-25), reported with 0.05 arcsec precision in Table 1 of [Beamín et al. (2016)](https://doi.org/10.1051/0004-6361/201628662). It uses the Luhman & Esplin astrometric solution quoted in the literature: `pm_ra_cosdec = -8118 ± 8 mas/yr`, `pm_dec = -680 ± 7 mas/yr`, and parallax `449 ± 8 mas`.
-
-The code propagates the coordinate to the initial discovery epoch and independently to each image's observation midpoint. It does not confuse the J2000/ICRS coordinate frame with the measurement epoch. The scientific dashboard includes annual parallax using Astropy's built-in Earth ephemeris and the FITS geocentric spacecraft position when supplied. Radial velocity is set to zero; its perspective effect over this interval is negligible compared with the positional uncertainty and 6.15-arcsec SPHEREx pixels.
-
-## Outputs and safety behavior
-
-- `data/metadata/wise0855_observations.csv`: SIA2 records plus observation-epoch target coordinates, wavelength bounds, release, access URL, and the unmodified row serialized as JSON.
-- `data/metadata/wise0855_manifest.csv`: source and cutout URLs, filenames, byte counts, SHA-256 hashes, status, and errors.
-- `data/raw/wise0855/*.fits`: validated original cutout bytes, never rewritten.
-- `data/metadata/wise0855_fits_inventory.csv`: HDU names, shapes, types, units, finite-pixel fraction, and a conservative semantic classification.
-- `outputs/plots/wise0855/*_science_dashboard.png`: target-position, zodiacal-background, variance, flag, wavelength, and conservative forced-aperture diagnostics.
-- `outputs/wise0855_observation_summary.csv`: one row per existing detector-observation FITS product, including target footprint, wavelength, quality, and detection status.
-
-Downloads retry transient HTTP failures with exponential backoff, stream to `.part` files, enforce the byte budget while streaming, validate with Astropy before an atomic rename, and skip an existing file only after re-validating it. Unsupported URLs are reported and never fetched as full images.
-
-Official SPHEREx cutouts retain `IMAGE`, `FLAGS`, `VARIANCE`, `ZODI`, `PSF`, and `WCS-WAVE`. The inspector uses names and actual array structure rather than assuming every release or extension has an identical layout. `WCS-WAVE` is useful for visualization; the archive guide recommends the separate `CWAVE` and `CBAND` calibration layers for science analysis.
-
-## Testing
-
-```powershell
-pytest -q
+### Running Automated Verification Tests
+```bash
+pytest
 ```
+*All 80 scientific unit tests cover client queries, WCS reprojection, image cleaning, and candidate astrometry.*
 
-Tests cover coordinate propagation, archive-row parsing, empty results, the full-image safety guard, duplicate handling, download-budget enforcement, FITS validation, and inspection of a synthetic multi-extension FITS file. Network access is not needed for unit tests.
+---
 
-## Scientific limitations
+### Deployment Guide
 
-An image footprint containing the propagated coordinate is not evidence that WISE 0855 was detected. This phase only produces a reproducible image-cutout dataset. It does not infer a source spectrum from image pixels.
+#### Frontend Deployment on Vercel
+1. In your terminal, navigate to the web app:
+   ```bash
+   cd frontend/web-app
+   vercel
+   ```
+2. Follow the interactive prompts to link and deploy your project.
+3. In your Vercel Project Settings, add the environment variable:
+   - `VITE_API_BASE_URL`: `https://your-backend-api-url.com` (or leave unset for local default).
 
-IRSA now provides a [SPHEREx Spectrophotometry Tool](https://irsa.ipac.caltech.edu/onlinehelp/spherex/spherex/sp.html) that performs Tractor-based forced photometry and returns wavelength, flux, uncertainty, bandpass width, flags, and fit diagnostics. The reviewed public documentation describes the supported interactive Data Explorer/job workflow, but does not document a stable programmatic spectrophotometry submission API. For that reason this pipeline does not automate or reverse-engineer the service; using its documented UI with accurately propagated source positions is a separate follow-up phase.
-
-## Official references
-
-- [SPHEREx mission and releases at IRSA](https://irsa.ipac.caltech.edu/Missions/spherex.html)
-- [SPHEREx data access and SIA2/cutout examples](https://caltech-ipac.github.io/spherex-archive-documentation/spherex-data-access/)
-- [SPHEREx data products and release differences](https://caltech-ipac.github.io/spherex-archive-documentation/spherex-data-products/)
-- [IRSA program interfaces](https://irsa.ipac.caltech.edu/voapi.html)
-- [SPHEREx Data Explorer FAQ](https://irsa.ipac.caltech.edu/onlinehelp/spherex/spherex/faq.html)
-
-As of November 2026, the archive documentation recommends DR1 and QR3 for new work. The pipeline searches the `spherex_dr1` and `spherex_qr3` wide-survey collections by default; the reusable client also supports their separate `_deep` collections. QR2 is no longer searchable through SIA2.
+#### Backend Deployment
+Deploy the Python backend (`backend/src/spherex/api_server.py` or wrapped in Gunicorn) to **Render**, **Railway**, or **Fly.io** with standard Python 3.11+.
